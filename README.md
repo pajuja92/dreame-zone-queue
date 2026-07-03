@@ -2,6 +2,12 @@
 
 # Dreame Zone Queue
 
+<img src="https://raw.githubusercontent.com/pajuja92/dreame-zone-queue/main/images/screenshots/card_empty.png" width="48%"><img src="https://raw.githubusercontent.com/pajuja92/dreame-zone-queue/main/images/screenshots/card_queue.png" width="48%">
+
+<img src="https://raw.githubusercontent.com/pajuja92/dreame-zone-queue/main/images/screenshots/integration.png" width="48%"><img src="https://raw.githubusercontent.com/pajuja92/dreame-zone-queue/main/images/screenshots/options.png" width="48%">
+
+<img src="https://raw.githubusercontent.com/pajuja92/dreame-zone-queue/main/images/screenshots/yaml_editor.png" width="48%">
+
 ## 🟢 Instalacja krok po kroku (dla początkujących)
 
 Ten dodatek pozwala ustawiać robotowi Dreame **kolejkę pokoi do sprzątania** —
