@@ -11,6 +11,14 @@ const SUCTION = ["off", "quiet", "standard", "strong", "turbo"];
 const WATER = ["off", "slightly_dry", "moist", "wet"];
 const REPEATS = [1, 2, 3];
 
+const T_SUCTION = { off: "wy\u0142.", quiet: "cichy", standard: "standard",
+                    strong: "mocny", turbo: "turbo" };
+const T_WATER = { off: "wy\u0142.", slightly_dry: "lekko suchy",
+                  moist: "wilgotny", wet: "mokry" };
+const T_STATE = { docked: "w doku", charging: "\u0142adowanie", cleaning: "sprz\u0105ta",
+                  returning: "wraca do bazy", paused: "pauza", idle: "bezczynny",
+                  error: "b\u0142\u0105d", unavailable: "niedost\u0119pny", sleeping: "u\u015Bpiony" };
+
 const DEFAULTS = {
   entity: "sensor.vacuum_zone_queue",
   title: "Kolejka sprzątania",
@@ -89,9 +97,9 @@ class VacuumQueueCard extends HTMLElement {
     const vac = st.attributes.vacuum_entity;
     const vacState = vac && this._hass.states[vac] ? this._hass.states[vac].state : "?";
 
-    const sel = (opts, cur, cls, id, suffix = "") =>
+    const sel = (opts, cur, cls, id, labels, suffix = "") =>
       `<select class="${cls}" data-id="${id}">` +
-      opts.map((o) => `<option value="${o}" ${String(o) === String(cur) ? "selected" : ""}>${o}${suffix}</option>`).join("") +
+      opts.map((o) => `<option value="${o}" ${String(o) === String(cur) ? "selected" : ""}>${(labels && labels[o]) || o}${suffix}</option>`).join("") +
       `</select>`;
 
     const rows = items.map((it, idx) => {
@@ -110,11 +118,11 @@ class VacuumQueueCard extends HTMLElement {
       return `<tr class="${it.status}" data-id="${it.id}" ${pending && !ro ? 'draggable="true"' : ""}>
         <td class="num">${idx + 1}</td>
         <td class="st">${STATUS_ICON[it.status] || ""}</td>
-        <td class="room">${ric(it.room, it.icon)}${it.room}
+        <td class="room"><span class="rst">${STATUS_ICON[it.status] || ""} </span>${ric(it.room, it.icon)}${it.room}
           ${active ? '<span class="now">sprząta teraz</span>' : ""}</td>
-        <td class="sx"><span class="fl">Ssanie</span>${editable ? sel(suctionOpts, it.suction, "suction", it.id) : `<span class="val">${it.suction}</span>`}</td>
-        <td class="wx"><span class="fl">Mop</span>${editable ? sel(waterOpts, it.water, "water", it.id) : `<span class="val">${it.water}</span>`}</td>
-        <td class="rep"><span class="fl">Powt.</span>${pending ? sel(REPEATS, it.repeats, "repeats", it.id, "\u00D7") : `<span class="val">${it.repeats}\u00D7</span>`}</td>
+        <td class="sx"><span class="fl">Ssanie</span>${editable ? sel(suctionOpts, it.suction, "suction", it.id, T_SUCTION) : `<span class="val">${T_SUCTION[it.suction] || it.suction}</span>`}</td>
+        <td class="wx"><span class="fl">Mop</span>${editable ? sel(waterOpts, it.water, "water", it.id, T_WATER) : `<span class="val">${T_WATER[it.water] || it.water}</span>`}</td>
+        <td class="rep"><span class="fl">Powt.</span>${pending ? sel(REPEATS, it.repeats, "repeats", it.id, null, "\u00D7") : `<span class="val">${it.repeats}\u00D7</span>`}</td>
         <td class="ctl">${ctl}</td>
       </tr>`;
     }).join("");
@@ -156,6 +164,8 @@ class VacuumQueueCard extends HTMLElement {
         .room { font-weight: 500; }
         .now { display: none; }
         .rep { width: 4.8em; }
+        .rst { display: none; }
+        .tblwrap { position: relative; }
         .ctl { white-space: nowrap; text-align: right; width: 8.5em; }
         .fl { display: none; }
         .val { color: var(--secondary-text-color); }
@@ -203,8 +213,8 @@ class VacuumQueueCard extends HTMLElement {
         :host(.narrow) table, :host(.narrow) tbody { display: block; width: 100%; }
         :host(.narrow) tr {
           display: grid;
-          grid-template-columns: auto 1fr 1fr minmax(76px, auto);
-          grid-template-areas: "st room room ctl" "sx sx wx rep";
+          grid-template-columns: minmax(0, 1.35fr) minmax(0, 1fr) 74px;
+          grid-template-areas: "room ctl ctl" "sx wx rep";
           gap: 8px 8px; align-items: center;
           background: color-mix(in srgb, var(--secondary-background-color) 55%, transparent);
           border: none; border-left: 4px solid var(--divider-color);
@@ -220,7 +230,8 @@ class VacuumQueueCard extends HTMLElement {
           background: color-mix(in srgb, var(--error-color, red) 10%, transparent); }
         :host(.narrow) td { display: block; border: none; padding: 0; }
         :host(.narrow) td.num { display: none; }
-        :host(.narrow) td.st { grid-area: st; width: auto; font-size: 1.05em; }
+        :host(.narrow) td.st { display: none; }
+        :host(.narrow) .rst { display: inline; }
         :host(.narrow) td.room { grid-area: room; font-weight: 650; font-size: 1.04em;
                                  overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
         :host(.narrow) .now { display: block; font-size: .7em; font-weight: 600;
@@ -246,20 +257,29 @@ class VacuumQueueCard extends HTMLElement {
         :host(.narrow) .addrow select, :host(.narrow) .addrow .btn { height: 44px; border-radius: 12px; }
         :host(.narrow) .actions { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
         :host(.narrow) .actions .btn { height: 44px; border-radius: 12px; }
+        :host(.narrow) tr.placeholder { background: transparent;
+          border: 2px dashed var(--primary-color); border-left-width: 2px; }
+        :host(.narrow) tr.placeholder > td { visibility: hidden; }
+        :host(.narrow) tr.ghost { position: absolute; z-index: 5; margin: 0;
+          pointer-events: none; opacity: .96;
+          transform: rotate(1.2deg) scale(1.02);
+          background: var(--card-background-color);
+          border: 1px solid var(--primary-color);
+          border-left: 4px solid var(--primary-color); }
       </style>
       <ha-card>
         ${c.show_header ? `<h2>${c.title}
-          <span class="badge ${running ? "running" : ""}">${running ? "RUNNING" : "IDLE"}</span>
+          <span class="badge ${running ? "running" : ""}">${running ? "PRACUJE" : "BEZCZYNNA"}</span>
         </h2>` : ""}
-        ${c.show_robot_state ? `<div class="sub">robot: ${vacState}</div>` : ""}
+        ${c.show_robot_state ? `<div class="sub">robot: ${T_STATE[vacState] || vacState}</div>` : ""}
         ${c.show_progress && prog.total > 0 ? `<div class="prog">
           <div class="pbar"><div class="pfill" style="width:${Math.round(100 * prog.done / prog.total)}%"></div></div>
           <span class="ptxt">${prog.done}/${prog.total} pokoi${etaS ? ` \u00B7 ~${Math.max(1, Math.round(etaS / 60))} min` : ""}</span>
         </div>` : ""}
         ${items.length
-          ? `<table><thead><tr>
+          ? `<div class="tblwrap"><table><thead><tr>
                <th>#</th><th></th><th>Pokój</th><th>Ssanie</th><th>Mop</th><th>Powt.</th><th></th>
-             </tr></thead><tbody>${rows}</tbody></table>`
+             </tr></thead><tbody>${rows}</tbody></table></div>`
           : `<div class="empty"><span class="e-ic">\u{1F9F9}</span>Kolejka pusta — dodaj pokoje poniżej.</div>`}
         ${c.show_add_row && !ro ? `<div class="addrow">
           <select id="addRoom">${rooms.map((r) => `<option value="${r}">${ric(r)}${r}</option>`).join("")}</select>
@@ -354,30 +374,48 @@ class VacuumQueueCard extends HTMLElement {
         this._call("delete_preset", { name: psel.value });
     });
 
-    // ---- przeciaganie dotykiem / mysza za uchwyt (pointer events) ----
+    // ---- przeciaganie za uchwyt: ghost + przerywana ramka ----
     root.querySelectorAll(".grip").forEach((g) => {
       g.addEventListener("pointerdown", (e) => {
+        if (!this.classList.contains("narrow")) return;
         e.preventDefault();
-        const srcTr = g.closest("tr");
-        const srcId = Number(srcTr.dataset.id);
-        srcTr.classList.add("dragging");
-        const hover = (ev) => {
-          const el = root.elementFromPoint(ev.clientX, ev.clientY);
-          const t = el && el.closest ? el.closest('tr[draggable="true"]') : null;
-          root.querySelectorAll("tr.dragover").forEach((x) => x.classList.remove("dragover"));
-          if (t && Number(t.dataset.id) !== srcId) t.classList.add("dragover");
-          return t;
+        const row = g.closest("tr");
+        const wrap = root.querySelector(".tblwrap");
+        const tbody = row.parentElement;
+        const wr = wrap.getBoundingClientRect();
+        const rr = row.getBoundingClientRect();
+        const offY = e.clientY - rr.top;
+        const ghost = row.cloneNode(true);
+        ghost.classList.add("ghost");
+        ghost.style.width = rr.width + "px";
+        ghost.style.left = (rr.left - wr.left) + "px";
+        ghost.style.top = (rr.top - wr.top) + "px";
+        wrap.appendChild(ghost);
+        row.classList.add("placeholder");
+        const move = (ev) => {
+          ev.preventDefault();
+          const w2 = wrap.getBoundingClientRect();
+          ghost.style.top = (ev.clientY - w2.top - offY) + "px";
+          const others = Array.from(tbody.querySelectorAll('tr[draggable="true"]'))
+            .filter((r) => r !== row);
+          for (const r of others) {
+            const b = r.getBoundingClientRect();
+            if (ev.clientY > b.top && ev.clientY < b.bottom) {
+              if (ev.clientY < b.top + b.height / 2) tbody.insertBefore(row, r);
+              else tbody.insertBefore(row, r.nextSibling);
+              break;
+            }
+          }
         };
-        const move = (ev) => { ev.preventDefault(); hover(ev); };
-        const up = (ev) => {
+        const up = () => {
           window.removeEventListener("pointermove", move);
           window.removeEventListener("pointerup", up);
           window.removeEventListener("pointercancel", up);
-          srcTr.classList.remove("dragging");
-          const t = hover(ev);
-          root.querySelectorAll("tr.dragover").forEach((x) => x.classList.remove("dragover"));
-          if (t && Number(t.dataset.id) !== srcId)
-            this._call("move", { item_id: srcId, new_position: posOf(t.dataset.id) });
+          ghost.remove();
+          row.classList.remove("placeholder");
+          const newPos = Array.from(tbody.children).indexOf(row) + 1;
+          if (newPos !== posOf(row.dataset.id))
+            this._call("move", { item_id: Number(row.dataset.id), new_position: newPos });
         };
         window.addEventListener("pointermove", move, { passive: false });
         window.addEventListener("pointerup", up);

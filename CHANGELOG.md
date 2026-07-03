@@ -4,6 +4,20 @@ Wszystkie istotne zmiany w projekcie. Format oparty o
 [Keep a Changelog](https://keepachangelog.com/pl/1.1.0/),
 wersjonowanie zgodne z [SemVer](https://semver.org/lang/pl/).
 
+## [1.4.1] - 2026-07-03
+
+### Zmienione
+- **Proporcje pól w trybie wąskim**: Ssanie i Mop dostają większość
+  szerokości, Powtórzenia mają stałe 74 px; ikona statusu przeniesiona
+  do linii z nazwą pokoju (koniec ze ściętymi „standa…" i „m").
+- **Nowa animacja zmiany kolejności**: złapany za uchwyt ☰ wiersz „idzie
+  za palcem" jako uniesiona karta, a w liście zostaje pusty kontener
+  z przerywaną ramką, który na bieżąco przeskakuje w miejsce docelowe.
+- **Polskie tłumaczenia wyświetlanych wartości**: poziomy ssania
+  (cichy/standard/mocny/turbo/wył.), mopa (lekko suchy/wilgotny/mokry/wył.),
+  stany robota (w doku, sprząta, wraca do bazy…) i badge PRACUJE/BEZCZYNNA.
+  Do backendu nadal trafiają wartości kanoniczne.
+
 ## [1.4.0] - 2026-07-03
 
 ### Dodane
