@@ -7,7 +7,8 @@ from pathlib import Path
 import voluptuous as vol
 
 from homeassistant.config_entries import ConfigEntry
-from homeassistant.core import HomeAssistant, ServiceCall
+from homeassistant.core import HomeAssistant, ServiceCall, SupportsResponse
+from homeassistant.exceptions import ServiceValidationError
 from homeassistant.helpers import config_validation as cv
 
 from .const import (
@@ -34,6 +35,7 @@ from .const import (
     WATER_LEVELS,
 )
 from .manager import QueueManager
+from .rooms import rooms_to_yaml, validate_rooms
 
 _LOGGER = logging.getLogger(__name__)
 PLATFORMS = ["sensor", "button"]
@@ -156,3 +158,39 @@ def _register_services(hass: HomeAssistant) -> None:
     hass.services.async_register(DOMAIN, SERVICE_PAUSE, wrap("async_pause"))
     hass.services.async_register(DOMAIN, SERVICE_SKIP, wrap("async_skip"))
     hass.services.async_register(DOMAIN, SERVICE_CLEAR, wrap("async_clear"))
+
+    async def import_rooms(call: ServiceCall) -> None:
+        manager = _get_manager(hass)
+        if manager is None:
+            raise ServiceValidationError("No configured Dreame Zone Queue instance")
+        rooms, err = validate_rooms(call.data["rooms"])
+        if err:
+            raise ServiceValidationError(f"Invalid rooms definition: {err}")
+        await manager.async_import_rooms(rooms, call.data.get("mode", "merge"))
+
+    async def export_rooms(call: ServiceCall) -> dict:
+        manager = _get_manager(hass)
+        if manager is None:
+            raise ServiceValidationError("No configured Dreame Zone Queue instance")
+        rooms = manager.rooms
+        return {"rooms": rooms, "yaml": rooms_to_yaml(rooms)}
+
+    hass.services.async_register(
+        DOMAIN,
+        "import_rooms",
+        import_rooms,
+        vol.Schema(
+            {
+                vol.Required("rooms"): dict,
+                vol.Optional("mode", default="merge"): vol.In(["merge", "replace"]),
+            }
+        ),
+    )
+    hass.services.async_register(
+        DOMAIN,
+        "export_rooms",
+        export_rooms,
+        vol.Schema({}),
+        supports_response=SupportsResponse.ONLY,
+    )
+

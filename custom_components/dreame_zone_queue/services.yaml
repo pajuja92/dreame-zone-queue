@@ -46,3 +46,25 @@ start: {name: Start queue, description: Starts processing the queue.}
 pause: {name: Pause queue, description: Finishes the current room, then stops.}
 skip: {name: Skip current room, description: Stops the robot and moves to the next room.}
 clear: {name: Clear queue, description: Clears the queue and sends the robot home.}
+import_rooms:
+  name: Import rooms (bulk)
+  description: >-
+    Bulk-define rooms from a YAML/JSON mapping. Triggers an integration
+    reload; a running queue will be paused.
+  fields:
+    rooms:
+      name: Rooms
+      description: "Mapping: room name -> {zone: [x1,y1,x2,y2], suction, water, repeats}"
+      required: true
+      example: >-
+        {"Salon": {"zone": [-1200,-3000,3600,1500], "suction": "standard",
+        "water": "moist", "repeats": 1}}
+      selector: {object: {}}
+    mode:
+      name: Mode
+      description: merge = add/update to existing rooms, replace = overwrite all
+      default: merge
+      selector: {select: {options: [merge, replace]}}
+export_rooms:
+  name: Export rooms
+  description: Returns all room definitions (as an object and as ready-to-paste YAML).

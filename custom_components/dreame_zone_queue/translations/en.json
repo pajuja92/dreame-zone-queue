@@ -4,10 +4,14 @@
       "user": {
         "title": "Dreame Zone Queue",
         "description": "Select your Dreame vacuum entity. Rooms are configured later in the integration options.",
-        "data": {"vacuum_entity": "Vacuum entity"}
+        "data": {
+          "vacuum_entity": "Vacuum entity"
+        }
       }
     },
-    "abort": {"single_instance_allowed": "Only one instance is allowed."}
+    "abort": {
+      "single_instance_allowed": "Only one instance is allowed."
+    }
   },
   "options": {
     "step": {
@@ -17,26 +21,49 @@
           "add_room": "Add room",
           "edit_room": "Edit room",
           "remove_room": "Remove room",
-          "settings": "Settings"
+          "settings": "Settings",
+          "bulk_edit": "Bulk edit rooms (YAML)"
         }
       },
       "add_room": {
         "title": "Add room",
         "description": "Zone coordinates in map units (mm). Read them e.g. from Xiaomi Vacuum Map Card (zone cleanup mode).",
         "data": {
-          "name": "Room name", "x1": "X1", "y1": "Y1", "x2": "X2", "y2": "Y2",
-          "suction": "Default suction", "water": "Default mop level", "repeats": "Repeats"
+          "name": "Room name",
+          "x1": "X1",
+          "y1": "Y1",
+          "x2": "X2",
+          "y2": "Y2",
+          "suction": "Default suction",
+          "water": "Default mop level",
+          "repeats": "Repeats"
         }
       },
-      "edit_room": {"title": "Edit room", "data": {"room": "Room"}},
+      "edit_room": {
+        "title": "Edit room",
+        "data": {
+          "room": "Room"
+        }
+      },
       "edit_room_form": {
         "title": "Edit room",
         "data": {
-          "name": "Room name", "x1": "X1", "y1": "Y1", "x2": "X2", "y2": "Y2",
-          "suction": "Default suction", "water": "Default mop level", "repeats": "Repeats"
+          "name": "Room name",
+          "x1": "X1",
+          "y1": "Y1",
+          "x2": "X2",
+          "y2": "Y2",
+          "suction": "Default suction",
+          "water": "Default mop level",
+          "repeats": "Repeats"
         }
       },
-      "remove_room": {"title": "Remove room", "data": {"room": "Room"}},
+      "remove_room": {
+        "title": "Remove room",
+        "data": {
+          "room": "Room"
+        }
+      },
       "settings": {
         "title": "Settings",
         "data": {
@@ -48,9 +75,22 @@
           "suction_select_entity": "Suction select entity",
           "water_select_entity": "Mop humidity select entity"
         }
+      },
+      "bulk_edit": {
+        "title": "Bulk edit rooms (YAML)",
+        "description": "All rooms as one YAML document. Edit and submit to replace the whole set. {error_detail}",
+        "data": {
+          "rooms_yaml": "Rooms (YAML)"
+        }
       }
     },
-    "error": {"name_required": "Name is required.", "name_exists": "A room with this name already exists."},
-    "abort": {"no_rooms": "No rooms defined yet."}
+    "error": {
+      "name_required": "Name is required.",
+      "name_exists": "A room with this name already exists.",
+      "invalid_rooms_yaml": "Invalid rooms YAML — details shown above the form."
+    },
+    "abort": {
+      "no_rooms": "No rooms defined yet."
+    }
   }
 }

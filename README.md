@@ -1,3 +1,5 @@
+<p align="center"><img src="images/logo.png" alt="Dreame Zone Queue" width="560"/></p>
+
 # Dreame Zone Queue
 
 Kolejka sprzątania „pokój po pokoju" dla robotów Dreame zintegrowanych przez
@@ -51,6 +53,43 @@ Konfiguracja karty:
 type: custom:vacuum-queue-card
 entity: sensor.vacuum_zone_queue
 ```
+
+
+## Masowa definicja pokoi (YAML)
+
+Zamiast wklikiwać pokoje pojedynczo, masz dwie drogi:
+
+**1. Panel opcji → „Edytuj wszystkie pokoje (YAML)"** — jedno pole tekstowe
+z całym zestawem pokoi. Otwiera się wypełnione aktualną konfiguracją, więc
+działa też jako eksport/backup (skopiuj treść) i szybka edycja hurtem.
+Zapis podmienia cały zestaw.
+
+**2. Serwisy** — np. z Developer Tools → Actions:
+
+```yaml
+action: dreame_zone_queue.import_rooms
+data:
+  mode: merge          # merge = dopisz/aktualizuj, replace = zastąp wszystko
+  rooms:
+    Salon:
+      zone: [-1200, -3000, 3600, 1500]   # [x1, y1, x2, y2] w mm
+      suction: standard                  # quiet|standard|strong|turbo
+      water: moist                       # slightly_dry|moist|wet
+      repeats: 1
+    Kuchnia:
+      zone: [-400, -3500, 2300, -600]
+      suction: strong
+      water: wet
+      repeats: 2
+```
+
+`suction`, `water` i `repeats` są opcjonalne (domyślnie: standard / moist / 1).
+Odczyt wszystkich pokoi: `dreame_zone_queue.export_rooms` (zwraca obiekt
+oraz gotowy do wklejenia YAML — zaznacz „odpowiedź" w Developer Tools).
+
+Uwaga: import przeładowuje integrację, więc **działająca kolejka zostanie
+wstrzymana** (pozycje zostają, aktywny pokój wraca do `pending`) — rób
+importy, gdy robot nie sprząta.
 
 ## Ważne dla Dreame L10 Prime (i innych modeli z mopami obrotowymi)
 

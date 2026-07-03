@@ -222,6 +222,17 @@ class QueueManager:
             except Exception as err:  # noqa: BLE001
                 _LOGGER.warning("return_to_base failed: %s", err)
 
+
+    async def async_import_rooms(self, rooms: dict, mode: str = "merge") -> None:
+        """Bulk-set room definitions (triggers a config entry reload)."""
+        from .const import CONF_ROOMS
+        current = dict(self.rooms) if mode == "merge" else {}
+        current.update(rooms)
+        self.hass.config_entries.async_update_entry(
+            self.entry,
+            options={**self.entry.options, CONF_ROOMS: current},
+        )
+
     # ------------------------------------------------------------------
     # orchestration
     # ------------------------------------------------------------------

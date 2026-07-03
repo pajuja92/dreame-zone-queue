@@ -4,10 +4,14 @@
       "user": {
         "title": "Dreame Zone Queue",
         "description": "Wybierz encję odkurzacza Dreame. Pokoje skonfigurujesz później w opcjach integracji.",
-        "data": {"vacuum_entity": "Encja odkurzacza"}
+        "data": {
+          "vacuum_entity": "Encja odkurzacza"
+        }
       }
     },
-    "abort": {"single_instance_allowed": "Dozwolona jest tylko jedna instancja."}
+    "abort": {
+      "single_instance_allowed": "Dozwolona jest tylko jedna instancja."
+    }
   },
   "options": {
     "step": {
@@ -17,26 +21,49 @@
           "add_room": "Dodaj pokój",
           "edit_room": "Edytuj pokój",
           "remove_room": "Usuń pokój",
-          "settings": "Ustawienia"
+          "settings": "Ustawienia",
+          "bulk_edit": "Edytuj wszystkie pokoje (YAML)"
         }
       },
       "add_room": {
         "title": "Dodaj pokój",
         "description": "Koordynaty strefy w jednostkach mapy (mm). Odczytasz je np. z Xiaomi Vacuum Map Card (tryb zone cleanup).",
         "data": {
-          "name": "Nazwa pokoju", "x1": "X1", "y1": "Y1", "x2": "X2", "y2": "Y2",
-          "suction": "Domyślne ssanie", "water": "Domyślny poziom mopa", "repeats": "Powtórzenia"
+          "name": "Nazwa pokoju",
+          "x1": "X1",
+          "y1": "Y1",
+          "x2": "X2",
+          "y2": "Y2",
+          "suction": "Domyślne ssanie",
+          "water": "Domyślny poziom mopa",
+          "repeats": "Powtórzenia"
         }
       },
-      "edit_room": {"title": "Edytuj pokój", "data": {"room": "Pokój"}},
+      "edit_room": {
+        "title": "Edytuj pokój",
+        "data": {
+          "room": "Pokój"
+        }
+      },
       "edit_room_form": {
         "title": "Edytuj pokój",
         "data": {
-          "name": "Nazwa pokoju", "x1": "X1", "y1": "Y1", "x2": "X2", "y2": "Y2",
-          "suction": "Domyślne ssanie", "water": "Domyślny poziom mopa", "repeats": "Powtórzenia"
+          "name": "Nazwa pokoju",
+          "x1": "X1",
+          "y1": "Y1",
+          "x2": "X2",
+          "y2": "Y2",
+          "suction": "Domyślne ssanie",
+          "water": "Domyślny poziom mopa",
+          "repeats": "Powtórzenia"
         }
       },
-      "remove_room": {"title": "Usuń pokój", "data": {"room": "Pokój"}},
+      "remove_room": {
+        "title": "Usuń pokój",
+        "data": {
+          "room": "Pokój"
+        }
+      },
       "settings": {
         "title": "Ustawienia",
         "data": {
@@ -48,9 +75,22 @@
           "suction_select_entity": "Encja select ssania",
           "water_select_entity": "Encja select wilgotności mopa"
         }
+      },
+      "bulk_edit": {
+        "title": "Masowa edycja pokoi (YAML)",
+        "description": "Wszystkie pokoje jako jeden dokument YAML. Edytuj i zapisz, aby podmienić cały zestaw. {error_detail}",
+        "data": {
+          "rooms_yaml": "Pokoje (YAML)"
+        }
       }
     },
-    "error": {"name_required": "Nazwa jest wymagana.", "name_exists": "Pokój o tej nazwie już istnieje."},
-    "abort": {"no_rooms": "Nie zdefiniowano jeszcze żadnych pokoi."}
+    "error": {
+      "name_required": "Nazwa jest wymagana.",
+      "name_exists": "Pokój o tej nazwie już istnieje.",
+      "invalid_rooms_yaml": "Niepoprawny YAML pokoi — szczegóły nad formularzem."
+    },
+    "abort": {
+      "no_rooms": "Nie zdefiniowano jeszcze żadnych pokoi."
+    }
   }
 }

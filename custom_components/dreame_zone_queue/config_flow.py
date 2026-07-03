@@ -16,8 +16,10 @@ from homeassistant.helpers.selector import (
     SelectSelector,
     SelectSelectorConfig,
     TextSelector,
+    TextSelectorConfig,
 )
 
+from .rooms import parse_rooms_yaml, rooms_to_yaml
 from .const import (
     CONF_DELAY_BETWEEN_S,
     CONF_GRACE_S,
@@ -126,7 +128,7 @@ class DreameZoneQueueOptionsFlow(config_entries.OptionsFlow):
     async def async_step_init(self, user_input=None):
         return self.async_show_menu(
             step_id="init",
-            menu_options=["add_room", "edit_room", "remove_room", "settings"],
+            menu_options=["add_room", "edit_room", "remove_room", "bulk_edit", "settings"],
         )
 
     # ---------------- rooms ----------------
@@ -191,6 +193,35 @@ class DreameZoneQueueOptionsFlow(config_entries.OptionsFlow):
             }
         )
         return self.async_show_form(step_id="remove_room", data_schema=schema)
+
+
+    # ---------------- bulk YAML editor ----------------
+    async def async_step_bulk_edit(self, user_input=None):
+        errors = {}
+        placeholders = {"error_detail": ""}
+        if user_input is not None:
+            rooms, err = parse_rooms_yaml(user_input.get("rooms_yaml", ""))
+            if err:
+                errors["rooms_yaml"] = "invalid_rooms_yaml"
+                placeholders["error_detail"] = err
+            else:
+                return self._save(**{CONF_ROOMS: rooms})
+        default_text = (
+            user_input.get("rooms_yaml") if user_input else rooms_to_yaml(self._rooms)
+        )
+        schema = vol.Schema(
+            {
+                vol.Required("rooms_yaml", default=default_text): TextSelector(
+                    TextSelectorConfig(multiline=True)
+                )
+            }
+        )
+        return self.async_show_form(
+            step_id="bulk_edit",
+            data_schema=schema,
+            errors=errors,
+            description_placeholders=placeholders,
+        )
 
     # ---------------- settings ----------------
     async def async_step_settings(self, user_input=None):
