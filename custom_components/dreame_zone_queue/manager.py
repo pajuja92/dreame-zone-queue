@@ -141,7 +141,7 @@ class QueueManager:
                 "room": room,
                 "zone": base["zone"],
                 "suction": suction or base.get("suction", "standard"),
-                "water": water or base.get("water", "medium"),
+                "water": water or base.get("water", "moist"),
                 "repeats": int(repeats or base.get("repeats", 1)),
                 "status": STATUS_PENDING,
             }

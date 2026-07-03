@@ -11,7 +11,7 @@ const STATUS_ICON = {
   error: "\u26A0\uFE0F",
 };
 const SUCTION = ["quiet", "standard", "strong", "turbo"];
-const WATER = ["low", "medium", "high"];
+const WATER = ["slightly_dry", "moist", "wet"];
 
 class VacuumQueueCard extends HTMLElement {
   setConfig(config) {

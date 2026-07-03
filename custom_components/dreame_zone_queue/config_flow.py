@@ -53,7 +53,7 @@ def _room_schema(defaults: dict | None = None) -> vol.Schema:
             vol.Required("suction", default=d.get("suction", "standard")): SelectSelector(
                 SelectSelectorConfig(options=SUCTION_LEVELS)
             ),
-            vol.Required("water", default=d.get("water", "medium")): SelectSelector(
+            vol.Required("water", default=d.get("water", "moist")): SelectSelector(
                 SelectSelectorConfig(options=WATER_LEVELS)
             ),
             vol.Required("repeats", default=d.get("repeats", 1)): NumberSelector(
