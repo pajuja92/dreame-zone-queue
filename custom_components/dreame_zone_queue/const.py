@@ -1,7 +1,7 @@
 """Constants for Dreame Zone Queue."""
 
 DOMAIN = "dreame_zone_queue"
-VERSION = "1.1.0"
+VERSION = "1.2.0"
 
 URL_BASE = "/dreame_zone_queue_files"
 CARD_FILENAME = "vacuum-queue-card.js"
@@ -15,6 +15,7 @@ CONF_USE_SELECTS = "use_selects"
 CONF_WATER_PARAM = "water_param"
 CONF_SUCTION_SELECT = "suction_select_entity"
 CONF_WATER_SELECT = "water_select_entity"
+CONF_MODE_SELECT = "cleaning_mode_select_entity"
 CONF_DELAY_BETWEEN_S = "delay_between_zones"
 
 DEFAULT_GRACE_S = 45
@@ -22,8 +23,8 @@ DEFAULT_DELAY_BETWEEN_S = 3
 DEFAULT_WATER_PARAM = "mop_pad_humidity"
 DEFAULT_FINISHED_STATES = ["returning", "docked", "idle", "charging"]
 
-SUCTION_LEVELS = ["quiet", "standard", "strong", "turbo"]
-WATER_LEVELS = ["slightly_dry", "moist", "wet"]
+SUCTION_LEVELS = ["off", "quiet", "standard", "strong", "turbo"]
+WATER_LEVELS = ["off", "slightly_dry", "moist", "wet"]
 
 # --- queue item statuses ---
 STATUS_PENDING = "pending"

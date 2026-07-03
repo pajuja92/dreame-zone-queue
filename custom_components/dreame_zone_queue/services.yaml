@@ -10,10 +10,10 @@ add:
       selector: {text: {}}
     suction:
       name: Suction level
-      selector: {select: {options: [quiet, standard, strong, turbo]}}
+      selector: {select: {options: [off, quiet, standard, strong, turbo]}}
     water:
       name: Mop / water level
-      selector: {select: {options: [slightly_dry, moist, wet]}}
+      selector: {select: {options: [off, slightly_dry, moist, wet]}}
     repeats:
       name: Repeats
       selector: {number: {min: 1, max: 3, mode: box}}
@@ -39,8 +39,8 @@ set_params:
   fields:
     item_id: {name: Item ID, selector: {number: {mode: box}}}
     position: {name: Position, selector: {number: {min: 1, max: 50, mode: box}}}
-    suction: {name: Suction, selector: {select: {options: [quiet, standard, strong, turbo]}}}
-    water: {name: Water, selector: {select: {options: [slightly_dry, moist, wet]}}}
+    suction: {name: Suction, selector: {select: {options: [off, quiet, standard, strong, turbo]}}}
+    water: {name: Water, selector: {select: {options: [off, slightly_dry, moist, wet]}}}
     repeats: {name: Repeats, selector: {number: {min: 1, max: 3, mode: box}}}
 start: {name: Start queue, description: Starts processing the queue.}
 pause: {name: Pause queue, description: Finishes the current room, then stops.}

@@ -73,7 +73,8 @@
           "water_param": "Nazwa parametru wody w vacuum_clean_zone (puste = brak)",
           "use_selects": "Ustawiaj poziomy przez encje select zamiast parametrów serwisu",
           "suction_select_entity": "Encja select ssania",
-          "water_select_entity": "Encja select wilgotności mopa"
+          "water_select_entity": "Encja select wilgotności mopa",
+          "cleaning_mode_select_entity": "Encja select trybu sprzątania (domyślnie: wyprowadzana z odkurzacza)"
         }
       },
       "bulk_edit": {

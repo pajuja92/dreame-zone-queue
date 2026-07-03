@@ -22,6 +22,7 @@ from homeassistant.helpers.selector import (
 from .rooms import parse_rooms_yaml, rooms_to_yaml
 from .const import (
     CONF_DELAY_BETWEEN_S,
+    CONF_MODE_SELECT,
     CONF_GRACE_S,
     CONF_ROOMS,
     CONF_SUCTION_SELECT,
@@ -257,6 +258,10 @@ class DreameZoneQueueOptionsFlow(config_entries.OptionsFlow):
                 vol.Optional(
                     CONF_WATER_SELECT,
                     description={"suggested_value": o.get(CONF_WATER_SELECT)},
+                ): EntitySelector(EntitySelectorConfig(domain="select")),
+                vol.Optional(
+                    CONF_MODE_SELECT,
+                    description={"suggested_value": o.get(CONF_MODE_SELECT)},
                 ): EntitySelector(EntitySelectorConfig(domain="select")),
             }
         )

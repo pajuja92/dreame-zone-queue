@@ -15,6 +15,7 @@ from .const import (
     CONF_FINISHED_STATES,
     CONF_GRACE_S,
     CONF_ROOMS,
+    CONF_MODE_SELECT,
     CONF_SUCTION_SELECT,
     CONF_USE_SELECTS,
     CONF_VACUUM_ENTITY,
@@ -151,9 +152,24 @@ class QueueManager:
 
     async def async_remove(self, item_id=None, position=None) -> None:
         item = self._find(item_id, position)
-        if item and item["status"] in (STATUS_PENDING, STATUS_DONE, STATUS_SKIPPED, STATUS_ERROR):
+        if item is None:
+            return
+        if item["status"] == STATUS_ACTIVE:
+            # removing the item being cleaned = stop that room, move on
             self.queue.remove(item)
             self._notify()
+            _LOGGER.info("Active room '%s' removed — stopping it", item["room"])
+            try:
+                await self.hass.services.async_call(
+                    "vacuum", "stop", {"entity_id": self.vacuum_entity}, blocking=True
+                )
+            except Exception as err:  # noqa: BLE001
+                _LOGGER.warning("vacuum.stop failed on active remove: %s", err)
+            if self.running:
+                self._schedule_dispatch(4)
+            return
+        self.queue.remove(item)
+        self._notify()
 
     async def async_move(self, item_id=None, position=None, new_position=None) -> None:
         item = self._find(item_id, position)
@@ -171,6 +187,12 @@ class QueueManager:
                                suction=None, water=None, repeats=None) -> None:
         item = self._find(item_id, position)
         if item is None or item["status"] != STATUS_PENDING:
+            return
+        new_s = suction or item["suction"]
+        new_w = water or item["water"]
+        if new_s == "off" and new_w == "off":
+            _LOGGER.warning("Suction and mop cannot both be off — change rejected")
+            self._notify()
             return
         if suction:
             item["suction"] = suction
@@ -260,6 +282,14 @@ class QueueManager:
 
         opts = self._opts
         use_selects = opts.get(CONF_USE_SELECTS, False)
+        suction_off = nxt["suction"] == "off"
+        water_off = nxt["water"] == "off"
+        if suction_off and water_off:
+            _LOGGER.error("Room '%s': suction and mop both off — skipping", nxt["room"])
+            nxt["status"] = STATUS_ERROR
+            self.running = False
+            self._notify()
+            return
         data: dict[str, Any] = {
             "entity_id": self.vacuum_entity,
             "zone": [nxt["zone"]],
@@ -267,22 +297,39 @@ class QueueManager:
         }
 
         try:
+            # cleaning mode: off na ssaniu -> mopping, off na mopie -> sweeping
+            mode = (
+                "sweeping" if water_off
+                else "mopping" if suction_off
+                else "sweeping_and_mopping"
+            )
+            mode_select = opts.get(CONF_MODE_SELECT) or (
+                f"select.{self.vacuum_entity.split('.', 1)[1]}_cleaning_mode"
+            )
+            try:
+                await self.hass.services.async_call(
+                    "select", "select_option",
+                    {"entity_id": mode_select, "option": mode}, blocking=True,
+                )
+            except Exception as err:  # noqa: BLE001
+                _LOGGER.warning("Could not set cleaning mode via %s: %s", mode_select, err)
+
             if use_selects:
-                # Set suction / mop humidity through select entities first
                 for select_key, value in (
                     (CONF_SUCTION_SELECT, nxt["suction"]),
                     (CONF_WATER_SELECT, nxt["water"]),
                 ):
                     ent = opts.get(select_key)
-                    if ent:
+                    if ent and value != "off":
                         await self.hass.services.async_call(
                             "select", "select_option",
                             {"entity_id": ent, "option": value}, blocking=True,
                         )
             else:
-                data["suction_level"] = nxt["suction"]
+                if not suction_off:
+                    data["suction_level"] = nxt["suction"]
                 water_param = opts.get(CONF_WATER_PARAM, DEFAULT_WATER_PARAM)
-                if water_param:
+                if water_param and not water_off:
                     data[water_param] = nxt["water"]
 
             _LOGGER.info("Dispatching zone for room '%s': %s", nxt["room"], data)

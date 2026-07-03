@@ -73,7 +73,8 @@
           "water_param": "Water parameter name in vacuum_clean_zone (empty = none)",
           "use_selects": "Set levels via select entities instead of service parameters",
           "suction_select_entity": "Suction select entity",
-          "water_select_entity": "Mop humidity select entity"
+          "water_select_entity": "Mop humidity select entity",
+          "cleaning_mode_select_entity": "Cleaning mode select entity (default: derived from vacuum)"
         }
       },
       "bulk_edit": {

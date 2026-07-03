@@ -1,37 +1,29 @@
 /* Vacuum Queue Card — bundled with the Dreame Zone Queue integration.
- * Table widget: reorder pending rooms, per-row suction/mop selects,
- * add rooms, start/pause/skip/clear. No external dependencies.
+ * v1.2.0: off levels, editable repeats, drag&drop reorder,
+ * removing the active row stops cleaning that room.
  */
 
 const STATUS_ICON = {
-  pending: "\u23F3",
-  active: "\u25B6\uFE0F",
-  done: "\u2705",
-  skipped: "\u23ED\uFE0F",
-  error: "\u26A0\uFE0F",
+  pending: "\u23F3", active: "\u25B6\uFE0F", done: "\u2705",
+  skipped: "\u23ED\uFE0F", error: "\u26A0\uFE0F",
 };
-const SUCTION = ["quiet", "standard", "strong", "turbo"];
-const WATER = ["slightly_dry", "moist", "wet"];
+const SUCTION = ["off", "quiet", "standard", "strong", "turbo"];
+const WATER = ["off", "slightly_dry", "moist", "wet"];
+const REPEATS = [1, 2, 3];
 
 class VacuumQueueCard extends HTMLElement {
   setConfig(config) {
     this._config = { entity: "sensor.vacuum_zone_queue", ...config };
   }
-
-  static getStubConfig() {
-    return { entity: "sensor.vacuum_zone_queue" };
-  }
-
-  getCardSize() {
-    return 6;
-  }
+  static getStubConfig() { return { entity: "sensor.vacuum_zone_queue" }; }
+  getCardSize() { return 6; }
 
   set hass(hass) {
     this._hass = hass;
     const st = hass.states[this._config.entity];
-    const fingerprint = st ? st.last_updated + JSON.stringify(st.attributes.items) + st.state : "missing";
-    if (fingerprint === this._fingerprint) return;
-    this._fingerprint = fingerprint;
+    const fp = st ? st.last_updated + JSON.stringify(st.attributes.items) + st.state : "missing";
+    if (fp === this._fp) return;
+    this._fp = fp;
     this._render(st);
   }
 
@@ -53,32 +45,31 @@ class VacuumQueueCard extends HTMLElement {
     const vac = st.attributes.vacuum_entity;
     const vacState = vac && this._hass.states[vac] ? this._hass.states[vac].state : "?";
 
-    const sel = (opts, cur, cls, id) =>
+    const sel = (opts, cur, cls, id, suffix = "") =>
       `<select class="${cls}" data-id="${id}">` +
-      opts.map((o) => `<option ${o === cur ? "selected" : ""}>${o}</option>`).join("") +
+      opts.map((o) => `<option value="${o}" ${String(o) === String(cur) ? "selected" : ""}>${o}${suffix}</option>`).join("") +
       `</select>`;
 
-    const rows = items
-      .map((it, idx) => {
-        const pending = it.status === "pending";
-        const ctl = pending
-          ? `<button class="ib up" data-id="${it.id}" title="Up">\u25B2</button>` +
-            `<button class="ib down" data-id="${it.id}" title="Down">\u25BC</button>` +
-            `<button class="ib del" data-id="${it.id}" title="Remove">\u2715</button>`
-          : it.status === "active"
-          ? ""
-          : `<button class="ib del" data-id="${it.id}" title="Remove">\u2715</button>`;
-        return `<tr class="${it.status}">
-          <td class="num">${idx + 1}</td>
-          <td class="st">${STATUS_ICON[it.status] || ""}</td>
-          <td class="room">${it.room}</td>
-          <td>${pending ? sel(SUCTION, it.suction, "suction", it.id) : it.suction}</td>
-          <td>${pending ? sel(WATER, it.water, "water", it.id) : it.water}</td>
-          <td class="num">${it.repeats}\u00D7</td>
-          <td class="ctl">${ctl}</td>
-        </tr>`;
-      })
-      .join("");
+    const rows = items.map((it, idx) => {
+      const pending = it.status === "pending";
+      const active = it.status === "active";
+      const del = `<button class="ib del ${active ? "danger" : ""}" data-id="${it.id}"
+                    title="${active ? "Zakończ i usuń" : "Usuń"}">\u2715</button>`;
+      const ctl = pending
+        ? `<span class="grip" title="Przeciągnij">\u2630</span>` +
+          `<button class="ib up" data-id="${it.id}" title="Wyżej">\u25B2</button>` +
+          `<button class="ib down" data-id="${it.id}" title="Niżej">\u25BC</button>` + del
+        : del;
+      return `<tr class="${it.status}" data-id="${it.id}" ${pending ? 'draggable="true"' : ""}>
+        <td class="num">${idx + 1}</td>
+        <td class="st">${STATUS_ICON[it.status] || ""}</td>
+        <td class="room">${it.room}</td>
+        <td>${pending ? sel(SUCTION, it.suction, "suction", it.id) : it.suction}</td>
+        <td>${pending ? sel(WATER, it.water, "water", it.id) : it.water}</td>
+        <td class="rep">${pending ? sel(REPEATS, it.repeats, "repeats", it.id, "\u00D7") : it.repeats + "\u00D7"}</td>
+        <td class="ctl">${ctl}</td>
+      </tr>`;
+    }).join("");
 
     this.shadowRoot.innerHTML = `
       <style>
@@ -95,14 +86,20 @@ class VacuumQueueCard extends HTMLElement {
         tr.active { background: color-mix(in srgb, var(--primary-color) 14%, transparent); font-weight: 600; }
         tr.done, tr.skipped { opacity: .55; }
         tr.error { background: color-mix(in srgb, var(--error-color, red) 14%, transparent); }
+        tr.dragover td { border-top: 2px solid var(--primary-color); }
+        tr[draggable="true"] { cursor: grab; }
+        tr.dragging { opacity: .4; }
         .num { text-align: center; width: 2em; }
         .st { width: 1.6em; text-align:center; }
-        .ctl { white-space: nowrap; text-align: right; width: 6em; }
+        .rep { width: 4.5em; }
+        .ctl { white-space: nowrap; text-align: right; width: 8em; }
+        .grip { cursor: grab; color: var(--secondary-text-color); padding: 0 6px; user-select: none; }
         select { background: var(--card-background-color); color: var(--primary-text-color);
                  border: 1px solid var(--divider-color); border-radius: 4px; padding: 2px 4px; }
         .ib { background: none; border: 1px solid var(--divider-color); border-radius: 4px;
               color: var(--primary-text-color); cursor: pointer; padding: 2px 6px; margin-left: 3px; }
         .ib:hover { background: var(--secondary-background-color); }
+        .ib.danger { border-color: var(--error-color, #d32f2f); color: var(--error-color, #d32f2f); }
         .empty { padding: 16px 4px; color: var(--secondary-text-color); font-style: italic; }
         .addrow, .actions { display: flex; gap: 8px; margin-top: 12px; flex-wrap: wrap; align-items: center; }
         .btn { border: none; border-radius: 6px; padding: 7px 14px; cursor: pointer; font-weight: 600;
@@ -116,13 +113,11 @@ class VacuumQueueCard extends HTMLElement {
           <span class="badge ${running ? "running" : ""}">${running ? "RUNNING" : "IDLE"}</span>
         </h2>
         <div class="sub">robot: ${vacState}</div>
-        ${
-          items.length
-            ? `<table><thead><tr>
-                 <th>#</th><th></th><th>Pokój</th><th>Ssanie</th><th>Mop</th><th></th><th></th>
-               </tr></thead><tbody>${rows}</tbody></table>`
-            : `<div class="empty">Kolejka pusta — dodaj pokoje poniżej.</div>`
-        }
+        ${items.length
+          ? `<table><thead><tr>
+               <th>#</th><th></th><th>Pokój</th><th>Ssanie</th><th>Mop</th><th>Powt.</th><th></th>
+             </tr></thead><tbody>${rows}</tbody></table>`
+          : `<div class="empty">Kolejka pusta — dodaj pokoje poniżej.</div>`}
         <div class="addrow">
           <select id="addRoom">${rooms.map((r) => `<option>${r}</option>`).join("")}</select>
           <button class="btn" id="add" ${rooms.length ? "" : "disabled"}>+ Dodaj</button>
@@ -136,6 +131,9 @@ class VacuumQueueCard extends HTMLElement {
       </ha-card>`;
 
     const root = this.shadowRoot;
+    const byId = (id) => items.find((i) => i.id === Number(id));
+    const posOf = (id) => items.findIndex((i) => i.id === Number(id)) + 1;
+
     root.getElementById("start").onclick = () => this._call("start");
     root.getElementById("pause").onclick = () => this._call("pause");
     root.getElementById("skip").onclick = () => this._call("skip");
@@ -144,7 +142,6 @@ class VacuumQueueCard extends HTMLElement {
     root.getElementById("add").onclick = () =>
       this._call("add", { room: root.getElementById("addRoom").value });
 
-    const posOf = (id) => items.findIndex((i) => i.id === Number(id)) + 1;
     root.querySelectorAll(".up").forEach((b) => {
       b.onclick = () => {
         const p = posOf(b.dataset.id);
@@ -159,15 +156,66 @@ class VacuumQueueCard extends HTMLElement {
       };
     });
     root.querySelectorAll(".del").forEach((b) => {
-      b.onclick = () => this._call("remove", { item_id: Number(b.dataset.id) });
+      b.onclick = () => {
+        const it = byId(b.dataset.id);
+        if (it && it.status === "active" &&
+            !confirm(`Zakończyć sprzątanie pokoju "${it.room}" i usunąć go z kolejki?`)) return;
+        this._call("remove", { item_id: Number(b.dataset.id) });
+      };
     });
     root.querySelectorAll("select.suction").forEach((s) => {
-      s.onchange = () =>
+      s.onchange = () => {
+        const it = byId(s.dataset.id);
+        if (s.value === "off" && it && it.water === "off") {
+          alert("Ssanie i mop nie mogą być jednocześnie wyłączone.");
+          s.value = it.suction; return;
+        }
         this._call("set_params", { item_id: Number(s.dataset.id), suction: s.value });
+      };
     });
     root.querySelectorAll("select.water").forEach((s) => {
-      s.onchange = () =>
+      s.onchange = () => {
+        const it = byId(s.dataset.id);
+        if (s.value === "off" && it && it.suction === "off") {
+          alert("Ssanie i mop nie mogą być jednocześnie wyłączone.");
+          s.value = it.water; return;
+        }
         this._call("set_params", { item_id: Number(s.dataset.id), water: s.value });
+      };
+    });
+    root.querySelectorAll("select.repeats").forEach((s) => {
+      s.onchange = () =>
+        this._call("set_params", { item_id: Number(s.dataset.id), repeats: Number(s.value) });
+    });
+
+    // ---- drag & drop (tylko wiersze pending) ----
+    let dragId = null;
+    root.querySelectorAll('tr[draggable="true"]').forEach((tr) => {
+      tr.addEventListener("dragstart", (e) => {
+        dragId = tr.dataset.id;
+        tr.classList.add("dragging");
+        e.dataTransfer.effectAllowed = "move";
+        e.dataTransfer.setData("text/plain", dragId);
+      });
+      tr.addEventListener("dragend", () => {
+        tr.classList.remove("dragging");
+        root.querySelectorAll("tr.dragover").forEach((t) => t.classList.remove("dragover"));
+      });
+      tr.addEventListener("dragover", (e) => {
+        if (dragId && dragId !== tr.dataset.id) {
+          e.preventDefault();
+          tr.classList.add("dragover");
+        }
+      });
+      tr.addEventListener("dragleave", () => tr.classList.remove("dragover"));
+      tr.addEventListener("drop", (e) => {
+        e.preventDefault();
+        tr.classList.remove("dragover");
+        const src = Number(e.dataTransfer.getData("text/plain") || dragId);
+        if (src && src !== Number(tr.dataset.id))
+          this._call("move", { item_id: src, new_position: posOf(tr.dataset.id) });
+        dragId = null;
+      });
     });
   }
 }
