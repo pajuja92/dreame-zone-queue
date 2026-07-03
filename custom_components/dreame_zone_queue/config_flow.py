@@ -19,7 +19,7 @@ from homeassistant.helpers.selector import (
     TextSelectorConfig,
 )
 
-from .rooms import parse_rooms_yaml, rooms_to_yaml
+from .rooms import parse_rooms_yaml, rooms_from_dreame_attrs, rooms_to_yaml
 from .const import (
     CONF_DELAY_BETWEEN_S,
     CONF_MODE_SELECT,
@@ -131,7 +131,7 @@ class DreameZoneQueueOptionsFlow(config_entries.OptionsFlow):
     async def async_step_init(self, user_input=None):
         return self.async_show_menu(
             step_id="init",
-            menu_options=["add_room", "edit_room", "remove_room", "bulk_edit", "settings"],
+            menu_options=["add_room", "edit_room", "remove_room", "import_dreame", "bulk_edit", "settings"],
         )
 
     # ---------------- rooms ----------------
@@ -197,6 +197,83 @@ class DreameZoneQueueOptionsFlow(config_entries.OptionsFlow):
         )
         return self.async_show_form(step_id="remove_room", data_schema=schema)
 
+
+
+    # ---------------- import z dreame ----------------
+    async def async_step_import_dreame(self, user_input=None):
+        errors = {}
+        if user_input is not None:
+            camera = user_input.get("camera_entity")
+            vac = self._opts.get(CONF_VACUUM_ENTITY, "")
+            base = vac.split(".", 1)[1] if "." in vac else ""
+            candidates = [c for c in (
+                camera, f"camera.{base}_map" if base else None, vac or None,
+            ) if c]
+            found = {}
+            for ent in candidates:
+                st = self.hass.states.get(ent)
+                if st:
+                    found = rooms_from_dreame_attrs(st.attributes)
+                    if found:
+                        break
+            if not found:
+                errors["base"] = "no_dreame_rooms"
+            else:
+                rooms = self._rooms if user_input.get("mode") == "merge" else {}
+                rooms.update(found)
+                return self._save(**{CONF_ROOMS: rooms})
+        schema = vol.Schema(
+            {
+                vol.Optional("camera_entity"): EntitySelector(
+                    EntitySelectorConfig(domain="camera")
+                ),
+                vol.Required("mode", default="merge"): SelectSelector(
+                    SelectSelectorConfig(options=["merge", "replace"])
+                ),
+            }
+        )
+        return self.async_show_form(
+            step_id="import_dreame", data_schema=schema, errors=errors
+        )
+
+
+    # ---------------- auto-detect from dreame ----------------
+    async def async_step_detect_rooms(self, user_input=None):
+        errors = {}
+        vac = self._opts.get(CONF_VACUUM_ENTITY, "")
+        derived = f"camera.{vac.split('.', 1)[1]}_map" if "." in vac else None
+        if user_input is not None:
+            from .rooms import rooms_from_attribute
+            found = {}
+            for ent in (user_input.get("camera_entity"), derived, vac):
+                if not ent:
+                    continue
+                st = self.hass.states.get(ent)
+                if st is None:
+                    continue
+                found = rooms_from_attribute(st.attributes.get("rooms"))
+                if found:
+                    break
+            if not found:
+                errors["base"] = "no_rooms_found"
+            else:
+                rooms = self._rooms if user_input["mode"] == "merge" else {}
+                rooms.update(found)
+                return self._save(**{CONF_ROOMS: rooms})
+        schema = vol.Schema(
+            {
+                vol.Optional(
+                    "camera_entity",
+                    description={"suggested_value": derived},
+                ): EntitySelector(EntitySelectorConfig(domain="camera")),
+                vol.Required("mode", default="merge"): SelectSelector(
+                    SelectSelectorConfig(options=["merge", "replace"])
+                ),
+            }
+        )
+        return self.async_show_form(
+            step_id="detect_rooms", data_schema=schema, errors=errors
+        )
 
     # ---------------- bulk YAML editor ----------------
     async def async_step_bulk_edit(self, user_input=None):

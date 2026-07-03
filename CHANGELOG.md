@@ -4,6 +4,44 @@ Wszystkie istotne zmiany w projekcie. Format oparty o
 [Keep a Changelog](https://keepachangelog.com/pl/1.1.0/),
 wersjonowanie zgodne z [SemVer](https://semver.org/lang/pl/).
 
+## [1.5.0] - 2026-07-04
+
+### Dodane
+- **Automatyczne wykrywanie pokoi z Dreame**: nowy krok panelu opcji
+  „Wykryj pokoje z Dreame" oraz serwis `detect_rooms` — odczytuje atrybut
+  `rooms` z kamery mapy (domyślnie `camera.<nazwa>_map`, z fallbackiem na
+  encję odkurzacza), obsługuje formaty x0/y0/x1/y1, x1/y1/x2/y2, listę
+  `outline` oraz x/y/width/height i tworzy strefy jako prostokąty
+  obejmujące. Tryb merge zachowuje istniejące pokoje, replace zastępuje.
+- **Instrukcja instalacji dla początkujących** na początku README —
+  krok po kroku, od instalacji HACS po dodanie karty na pulpit.
+
+## [1.4.3] - 2026-07-03
+
+### Dodane
+- **Import pokoi z Dreame jednym kliknięciem** — nowy krok „Importuj pokoje
+  z Dreame" w panelu opcji oraz serwis `import_rooms_from_dreame`: nazwy
+  i obrysy pokoi są kopiowane z atrybutów kamery mapy (`camera.<robot>_map`)
+  lub encji odkurzacza, z automatycznym wykrywaniem źródła i normalizacją
+  współrzędnych.
+- **Instrukcja instalacji dla początkujących** na początku README —
+  krok po kroku, od HACS po dodanie widgetu na pulpit.
+- **Konfigurowalne położenie uchwytu przeciągania** (tryb wąski) —
+  wybór w edytorze karty: przy przyciskach (dotychczasowe), lewa krawędź
+  karty (pasek na całą wysokość), prawa krawędź karty, albo poziomy pasek
+  na górze karty. Warianty krawędziowe/górny dają duży cel dotykowy
+  oddzielony hairline'em od treści.
+
+## [1.4.2] - 2026-07-03
+
+### Dodane
+- Przełącznik „Pokaż strzałki zmiany kolejności" w edytorze karty —
+  strzałki ▲▼ można ukryć i wrócić do nich jednym kliknięciem.
+- **Usuwanie dwuklikiem**: przycisk ✕ ma zawsze czerwoną ramkę; pierwsze
+  kliknięcie „uzbraja" go (wypełnia na czerwono), drugie usuwa pozycję.
+  Brak drugiego kliknięcia w ciągu 3 s rozbraja przycisk. Zastępuje
+  systemowe okno potwierdzenia przy usuwaniu aktywnego pokoju.
+
 ## [1.4.1] - 2026-07-03
 
 ### Zmienione

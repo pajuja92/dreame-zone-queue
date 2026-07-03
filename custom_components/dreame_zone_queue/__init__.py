@@ -221,4 +221,32 @@ def _register_services(hass: HomeAssistant) -> None:
         vol.Schema({vol.Required("name"): cv.string}),
     )
 
+    async def detect_rooms(call: ServiceCall) -> dict:
+        manager = _get_manager(hass)
+        if manager is None:
+            raise ServiceValidationError("No configured Dreame Zone Queue instance")
+        n = await manager.async_detect_rooms(
+            call.data.get("mode", "merge"), call.data.get("camera_entity")
+        )
+        return {"imported": n}
+
+    hass.services.async_register(
+        DOMAIN, "detect_rooms", detect_rooms,
+        vol.Schema({
+            vol.Optional("mode", default="merge"): vol.In(["merge", "replace"]),
+            vol.Optional("camera_entity"): cv.string,
+        }),
+        supports_response=SupportsResponse.OPTIONAL,
+    )
+
+    hass.services.async_register(
+        DOMAIN, "import_rooms_from_dreame",
+        partial(preset_call, method="async_import_from_dreame"),
+        vol.Schema({
+            vol.Optional("camera_entity"): cv.entity_id,
+            vol.Optional("mode", default="merge"): vol.In(["merge", "replace"]),
+        }),
+    )
+
+
 

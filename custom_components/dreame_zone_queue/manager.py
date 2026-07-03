@@ -319,6 +319,54 @@ class QueueManager:
         )
 
 
+    async def async_import_from_dreame(self, camera_entity: str | None = None,
+                                        mode: str = "merge") -> int:
+        """Copy room definitions from dreame-vacuum entity attributes."""
+        from .rooms import rooms_from_dreame_attrs
+        base = self.vacuum_entity.split(".", 1)[1] if self.vacuum_entity else ""
+        candidates = [c for c in (
+            camera_entity, f"camera.{base}_map" if base else None,
+            self.vacuum_entity or None,
+        ) if c]
+        for ent in candidates:
+            st = self.hass.states.get(ent)
+            if st is None:
+                continue
+            rooms = rooms_from_dreame_attrs(st.attributes)
+            if rooms:
+                _LOGGER.info("Imported %d rooms from %s", len(rooms), ent)
+                await self.async_import_rooms(rooms, mode)
+                return len(rooms)
+        _LOGGER.warning(
+            "No rooms found in dreame entities (checked: %s)", candidates
+        )
+        return 0
+
+
+    async def async_detect_rooms(self, mode: str = "merge",
+                                 camera_entity: str | None = None) -> int:
+        """Import rooms from the dreame integration's 'rooms' attribute."""
+        from .rooms import rooms_from_attribute
+        name = self.vacuum_entity.split(".", 1)[1] if "." in self.vacuum_entity else ""
+        candidates = [camera_entity, f"camera.{name}_map", self.vacuum_entity]
+        found: dict = {}
+        for ent in candidates:
+            if not ent:
+                continue
+            st = self.hass.states.get(ent)
+            if st is None:
+                continue
+            found = rooms_from_attribute(st.attributes.get("rooms"))
+            if found:
+                _LOGGER.info("Detected %d rooms from %s", len(found), ent)
+                break
+        if not found:
+            _LOGGER.warning("Room detection found nothing (checked: %s)",
+                            [c for c in candidates if c])
+            return 0
+        await self.async_import_rooms(found, mode)
+        return len(found)
+
     # ------------------------------------------------------------------
     # presets
     # ------------------------------------------------------------------

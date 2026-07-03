@@ -97,3 +97,31 @@ delete_preset:
       name: Preset name
       required: true
       selector: {text: {}}
+import_rooms_from_dreame:
+  name: Import rooms from Dreame
+  description: >-
+    Copies room definitions (names and bounds) from the dreame-vacuum map
+    camera or vacuum entity attributes.
+  fields:
+    camera_entity:
+      name: Map camera entity
+      description: Leave empty to auto-detect (camera.<vacuum>_map)
+      selector: {entity: {domain: camera}}
+    mode:
+      name: Mode
+      default: merge
+      selector: {select: {options: [merge, replace]}}
+detect_rooms:
+  name: Detect rooms from Dreame
+  description: >-
+    Imports room definitions from the dreame-vacuum 'rooms' attribute
+    (map camera or vacuum entity). Returns the number of imported rooms.
+  fields:
+    mode:
+      name: Mode
+      default: merge
+      selector: {select: {options: [merge, replace]}}
+    camera_entity:
+      name: Map camera entity
+      description: Optional; by default derived from the vacuum entity (camera.<name>_map)
+      selector: {entity: {domain: camera}}

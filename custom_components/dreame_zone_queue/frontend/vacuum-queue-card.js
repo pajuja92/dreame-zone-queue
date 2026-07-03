@@ -26,6 +26,8 @@ const DEFAULTS = {
   show_robot_state: true,
   show_add_row: true,
   show_actions: true,
+  show_arrows: true,
+  grip_position: "buttons",
   show_progress: true,
   show_presets: true,
   read_only: false,
@@ -105,17 +107,22 @@ class VacuumQueueCard extends HTMLElement {
     const rows = items.map((it, idx) => {
       const pending = it.status === "pending";
       const active = it.status === "active";
-      const del = `<button class="ib del ${active ? "danger" : ""}" data-id="${it.id}"
-                    title="${active ? "Zakończ i usuń" : "Usuń"}">\u2715</button>`;
+      const del = `<button class="ib del" data-id="${it.id}"
+                    title="${active ? "Zakończ i usuń (kliknij 2×)" : "Usuń (kliknij 2×)"}">\u2715</button>`;
+      const arrows = c.show_arrows
+        ? `<button class="ib up" data-id="${it.id}" title="Wyżej">\u25B2</button>` +
+          `<button class="ib down" data-id="${it.id}" title="Niżej">\u25BC</button>`
+        : "";
+      const gripBtn = `<span class="grip" title="Przeciągnij">\u2630</span>`;
       const ctl = ro ? "" : pending
-        ? `<span class="grip" title="Przeciągnij">\u2630</span>` +
-          `<button class="ib up" data-id="${it.id}" title="Wyżej">\u25B2</button>` +
-          `<button class="ib down" data-id="${it.id}" title="Niżej">\u25BC</button>` + del
+        ? (c.grip_position === "buttons" ? gripBtn : "") + arrows + del
         : del;
+      const gripCell = `<td class="gripc">${pending && !ro && c.grip_position !== "buttons" ? gripBtn : ""}</td>`;
       const editable = !ro && (pending || active);
       const suctionOpts = active ? SUCTION.filter((o) => o !== "off") : SUCTION;
       const waterOpts = active ? WATER.filter((o) => o !== "off") : WATER;
       return `<tr class="${it.status}" data-id="${it.id}" ${pending && !ro ? 'draggable="true"' : ""}>
+        ${gripCell}
         <td class="num">${idx + 1}</td>
         <td class="st">${STATUS_ICON[it.status] || ""}</td>
         <td class="room"><span class="rst">${STATUS_ICON[it.status] || ""} </span>${ric(it.room, it.icon)}${it.room}
@@ -166,6 +173,7 @@ class VacuumQueueCard extends HTMLElement {
         .rep { width: 4.8em; }
         .rst { display: none; }
         .tblwrap { position: relative; }
+        td.gripc { display: none; }
         .ctl { white-space: nowrap; text-align: right; width: 8.5em; }
         .fl { display: none; }
         .val { color: var(--secondary-text-color); }
@@ -180,7 +188,9 @@ class VacuumQueueCard extends HTMLElement {
               color: var(--primary-text-color); cursor: pointer;
               padding: 3px 8px; margin-left: 4px; }
         .ib:hover { background: var(--secondary-background-color); }
-        .ib.danger { border-color: var(--error-color, #d32f2f); color: var(--error-color, #d32f2f); }
+        .ib.del { border-color: var(--error-color, #d32f2f); color: var(--error-color, #d32f2f); }
+        .ib.del.armed { background: var(--error-color, #d32f2f);
+                        border-color: var(--error-color, #d32f2f); color: #fff; }
 
         .prog { display: flex; align-items: center; gap: 10px; margin: 2px 0 12px; }
         .pbar { flex: 1; height: 6px; border-radius: 999px;
@@ -257,6 +267,25 @@ class VacuumQueueCard extends HTMLElement {
         :host(.narrow) .addrow select, :host(.narrow) .addrow .btn { height: 44px; border-radius: 12px; }
         :host(.narrow) .actions { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
         :host(.narrow) .actions .btn { height: 44px; border-radius: 12px; }
+        :host(.narrow) .v-left tr {
+          grid-template-columns: 34px minmax(0, 1.35fr) minmax(0, 1fr) 74px;
+          grid-template-areas: "grip room ctl ctl" "grip sx wx rep"; }
+        :host(.narrow) .v-right tr {
+          grid-template-columns: minmax(0, 1.35fr) minmax(0, 1fr) 74px 34px;
+          grid-template-areas: "room ctl ctl grip" "sx wx rep grip"; }
+        :host(.narrow) .v-top tr {
+          grid-template-areas: "grip grip grip" "room ctl ctl" "sx wx rep"; }
+        :host(.narrow) .v-left td.gripc, :host(.narrow) .v-right td.gripc,
+        :host(.narrow) .v-top td.gripc { display: block; grid-area: grip; }
+        :host(.narrow) td.gripc .grip { display: flex; width: 100%; height: 100%;
+          align-items: center; justify-content: center; border: none;
+          border-radius: 0; min-width: 0; margin: 0; padding: 0; }
+        :host(.narrow) .v-left td.gripc { margin: -12px 2px -12px -12px;
+          border-right: 1px solid var(--divider-color); }
+        :host(.narrow) .v-right td.gripc { margin: -12px -12px -12px 2px;
+          border-left: 1px solid var(--divider-color); }
+        :host(.narrow) .v-top td.gripc { margin: -12px -12px 2px; height: 24px;
+          border-bottom: 1px solid var(--divider-color); }
         :host(.narrow) tr.placeholder { background: transparent;
           border: 2px dashed var(--primary-color); border-left-width: 2px; }
         :host(.narrow) tr.placeholder > td { visibility: hidden; }
@@ -277,7 +306,7 @@ class VacuumQueueCard extends HTMLElement {
           <span class="ptxt">${prog.done}/${prog.total} pokoi${etaS ? ` \u00B7 ~${Math.max(1, Math.round(etaS / 60))} min` : ""}</span>
         </div>` : ""}
         ${items.length
-          ? `<div class="tblwrap"><table><thead><tr>
+          ? `<div class="tblwrap v-${c.grip_position}"><table><thead><tr>
                <th>#</th><th></th><th>Pokój</th><th>Ssanie</th><th>Mop</th><th>Powt.</th><th></th>
              </tr></thead><tbody>${rows}</tbody></table></div>`
           : `<div class="empty"><span class="e-ic">\u{1F9F9}</span>Kolejka pusta — dodaj pokoje poniżej.</div>`}
@@ -332,9 +361,11 @@ class VacuumQueueCard extends HTMLElement {
     });
     root.querySelectorAll(".del").forEach((b) => {
       b.onclick = () => {
-        const it = byId(b.dataset.id);
-        if (it && it.status === "active" &&
-            !confirm(`Zakończyć sprzątanie pokoju "${it.room}" i usunąć go z kolejki?`)) return;
+        if (!b.classList.contains("armed")) {
+          b.classList.add("armed");
+          setTimeout(() => b.classList.remove("armed"), 3000);
+          return;
+        }
         this._call("remove", { item_id: Number(b.dataset.id) });
       };
     });
@@ -467,6 +498,13 @@ const EDITOR_SCHEMA = [
       { name: "show_robot_state", selector: { boolean: {} } },
       { name: "show_add_row", selector: { boolean: {} } },
       { name: "show_actions", selector: { boolean: {} } },
+      { name: "show_arrows", selector: { boolean: {} } },
+      { name: "grip_position", selector: { select: { mode: "dropdown", options: [
+        { value: "buttons", label: "Przy przyciskach (domyślnie)" },
+        { value: "left", label: "Lewa krawędź karty" },
+        { value: "right", label: "Prawa krawędź karty" },
+        { value: "top", label: "Pasek na górze karty" },
+      ] } } },
       { name: "show_progress", selector: { boolean: {} } },
       { name: "show_presets", selector: { boolean: {} } },
       { name: "read_only", selector: { boolean: {} } },
@@ -482,6 +520,8 @@ const EDITOR_LABELS = {
   show_robot_state: "Pokaż stan robota",
   show_add_row: "Pokaż dodawanie pokoi",
   show_actions: "Pokaż przyciski sterujące",
+  show_arrows: "Pokaż strzałki zmiany kolejności",
+  grip_position: "Położenie uchwytu przeciągania (tryb wąski)",
   show_progress: "Pokaż pasek postępu i ETA",
   show_presets: "Pokaż presety",
   read_only: "Tylko podgląd (bez kontrolek)",

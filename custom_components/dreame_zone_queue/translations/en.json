@@ -22,7 +22,9 @@
           "edit_room": "Edit room",
           "remove_room": "Remove room",
           "settings": "Settings",
-          "bulk_edit": "Bulk edit rooms (YAML)"
+          "bulk_edit": "Bulk edit rooms (YAML)",
+          "import_dreame": "Import rooms from Dreame",
+          "detect_rooms": "Detect rooms from Dreame"
         }
       },
       "add_room": {
@@ -85,12 +87,30 @@
         "data": {
           "rooms_yaml": "Rooms (YAML)"
         }
+      },
+      "import_dreame": {
+        "title": "Import rooms from Dreame",
+        "description": "Copies room names and bounds from the dreame-vacuum map. Leave the camera empty to auto-detect.",
+        "data": {
+          "camera_entity": "Map camera entity (optional)",
+          "mode": "Mode (merge = add/update, replace = overwrite all)"
+        }
+      },
+      "detect_rooms": {
+        "title": "Detect rooms from Dreame",
+        "description": "Reads room outlines from the dreame-vacuum map camera and creates zones (bounding boxes). Merge keeps your existing rooms.",
+        "data": {
+          "camera_entity": "Map camera entity (optional)",
+          "mode": "Mode (merge / replace)"
+        }
       }
     },
     "error": {
       "name_required": "Name is required.",
       "name_exists": "A room with this name already exists.",
-      "invalid_rooms_yaml": "Invalid rooms YAML — details shown above the form."
+      "invalid_rooms_yaml": "Invalid rooms YAML — details shown above the form.",
+      "no_dreame_rooms": "No rooms found in the Dreame entities. Make sure the map camera works and the map is loaded.",
+      "no_rooms_found": "No rooms found — check that the map camera entity has a 'rooms' attribute."
     },
     "abort": {
       "no_rooms": "No rooms defined yet."

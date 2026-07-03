@@ -2,6 +2,107 @@
 
 # Dreame Zone Queue
 
+## 🟢 Instalacja krok po kroku (dla początkujących)
+
+Ten dodatek pozwala ustawiać robotowi Dreame **kolejkę pokoi do sprzątania** —
+z osobną mocą ssania i mopowania dla każdego pokoju — prosto z ekranu
+Home Assistanta. Instalacja zajmuje ok. 10 minut i nie wymaga pisania kodu.
+
+**Czego potrzebujesz na start:** działającego Home Assistanta, robota Dreame
+dodanego przez integrację [Tasshack/dreame-vacuum](https://github.com/Tasshack/dreame-vacuum)
+oraz sklepu z dodatkami **HACS**. Jeśli nie masz HACS, zainstaluj go najpierw
+według oficjalnej instrukcji: https://hacs.xyz/docs/use/ (sekcja *Download*),
+a potem wróć tutaj.
+
+**Krok 1 — dodaj to repozytorium do HACS.**
+W Home Assistancie kliknij w menu bocznym **HACS** → w prawym górnym rogu
+trzy kropki **⋮** → **Custom repositories** (Niestandardowe repozytoria).
+W pole *Repository* wklej adres tej strony (skopiuj go z paska przeglądarki),
+jako *Type* wybierz **Integration** i kliknij **Add**.
+
+**Krok 2 — zainstaluj dodatek.**
+Wciąż w HACS wpisz w wyszukiwarkę „Dreame Zone Queue", kliknij wynik,
+a potem niebieski przycisk **Download** (Pobierz) i potwierdź.
+
+**Krok 3 — zrestartuj Home Assistanta.**
+*Ustawienia → System* → przycisk **Uruchom ponownie** w prawym górnym rogu.
+Poczekaj, aż interfejs wróci (1–2 minuty).
+
+**Krok 4 — dodaj integrację.**
+*Ustawienia → Urządzenia i usługi* → niebieski przycisk **Dodaj integrację**
+(prawy dolny róg) → wpisz „Dreame Zone Queue" → wybierz z listy →
+wskaż swojego odkurzacza i kliknij **Wyślij**.
+
+**Krok 5 — wczytaj pokoje automatycznie.**
+Na liście integracji znajdź **Dreame Zone Queue** i kliknij **Konfiguruj** →
+**Wykryj pokoje z Dreame** → zostaw ustawienia jak są → **Wyślij**.
+Dodatek sam odczyta pokoje z mapy Twojego robota. (Możesz je potem
+dopieszczać: *Konfiguruj → Edytuj pokój* — np. zmienić domyślną moc
+ssania w sypialni na cichą.)
+
+**Krok 6 — dodaj kartę na pulpit.**
+Wejdź na swój pulpit (dashboard) → ołówek w prawym górnym rogu →
+**Dodaj kartę** → wyszukaj „Vacuum Queue" → kliknij → **Zapisz**.
+Jeśli karty nie ma na liście, odśwież stronę z pominięciem pamięci
+podręcznej (Ctrl+Shift+R na komputerze).
+
+Gotowe! Dodajesz pokoje do kolejki przyciskiem **+ Dodaj**, ustawiasz
+kolejność przeciągając wiersze, klikasz **Start** — a robot sprząta pokój
+po pokoju. W trakcie pracy możesz dowolnie przestawiać pokoje, które
+jeszcze czekają.
+
+---
+
+
+## 🟢 Instalacja krok po kroku (dla początkujących)
+
+Ta instrukcja zakłada, że masz działający Home Assistant i zainstalowany HACS
+(sklep z dodatkami). Nie masz HACS? Zainstaluj go najpierw według oficjalnego
+poradnika: **https://hacs.xyz/docs/use/download/download/** — a potem wróć tutaj.
+
+**Krok 1 — dodaj to repozytorium do HACS.**
+W Home Assistant kliknij w bocznym menu **HACS** → w prawym górnym rogu
+kliknij **trzy kropki (⋮)** → **Niestandardowe repozytoria** (Custom
+repositories). W polu adresu wklej link do tej strony (skopiuj go z paska
+przeglądarki), jako typ wybierz **Integration** i kliknij **Dodaj**.
+
+**Krok 2 — zainstaluj.**
+W HACS w polu wyszukiwania wpisz **Dreame Zone Queue**, kliknij wynik,
+a potem niebieski przycisk **Pobierz** (Download) i potwierdź.
+
+**Krok 3 — zrestartuj Home Assistanta.**
+Wejdź w **Ustawienia → System** i kliknij ikonę zasilania w prawym górnym
+rogu → **Uruchom ponownie**. Poczekaj 1–2 minuty, aż wszystko wstanie.
+
+**Krok 4 — dodaj integrację.**
+**Ustawienia → Urządzenia i usługi → + Dodaj integrację** (niebieski
+przycisk na dole po prawej) → wyszukaj **Dreame Zone Queue** → wybierz
+z listy swojego odkurzacza (encja zaczynająca się od `vacuum.`) → **Zatwierdź**.
+
+**Krok 5 — wczytaj swoje pokoje jednym kliknięciem.**
+Na liście integracji znajdź **Dreame Zone Queue** i kliknij **Konfiguruj**.
+Z menu wybierz **Importuj pokoje z Dreame** i kliknij **Zatwierdź**
+(nic nie musisz wypełniać). Nazwy i obrysy pokoi zostaną skopiowane
+z mapy Twojego robota. Gotowe — pokoje możesz potem podejrzeć i poprawić
+w tym samym menu (np. domyślną siłę ssania dla każdego pokoju).
+
+**Krok 6 — dodaj widget na pulpit.**
+Otwórz swój pulpit (dashboard) → kliknij **ołówek** w prawym górnym rogu →
+**+ Dodaj kartę** → na liście znajdź **Vacuum Queue Card** → **Zapisz**.
+Jeśli karty nie ma na liście, odśwież przeglądarkę z pominięciem pamięci
+podręcznej (Ctrl+Shift+R) i spróbuj ponownie.
+
+**Jak tego używać?** Na karcie wybierz pokój z listy i kliknij **+ Dodaj** —
+tak układasz kolejkę sprzątania. Dla każdego pokoju możesz ustawić siłę
+ssania i wilgotność mopa. Kliknij **▶ Start** i robot posprząta pokoje
+po kolei, w zadanej kolejności. Dopóki robot nie skończy danego pokoju,
+kolejność następnych możesz dowolnie zmieniać (przeciągnij wiersz za
+uchwyt ☰). Ulubione zestawy zapisuj jako **presety** (ikona 💾) —
+wczytasz je potem jednym kliknięciem.
+
+---
+
+
 Kolejka sprzątania „pokój po pokoju" dla robotów Dreame zintegrowanych przez
 [Tasshack/dreame-vacuum](https://github.com/Tasshack/dreame-vacuum).
 Pokoje definiujesz **ręcznie koordynatami** (strefy, nie segmenty z aplikacji

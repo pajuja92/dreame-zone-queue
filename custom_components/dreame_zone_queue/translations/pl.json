@@ -22,7 +22,9 @@
           "edit_room": "Edytuj pokój",
           "remove_room": "Usuń pokój",
           "settings": "Ustawienia",
-          "bulk_edit": "Edytuj wszystkie pokoje (YAML)"
+          "bulk_edit": "Edytuj wszystkie pokoje (YAML)",
+          "import_dreame": "Importuj pokoje z Dreame",
+          "detect_rooms": "Wykryj pokoje z Dreame"
         }
       },
       "add_room": {
@@ -85,12 +87,30 @@
         "data": {
           "rooms_yaml": "Pokoje (YAML)"
         }
+      },
+      "import_dreame": {
+        "title": "Import pokoi z Dreame",
+        "description": "Kopiuje nazwy i obrysy pokoi z mapy dreame-vacuum. Zostaw kamerę pustą, aby wykryć automatycznie.",
+        "data": {
+          "camera_entity": "Encja kamery mapy (opcjonalna)",
+          "mode": "Tryb (merge = dopisz/aktualizuj, replace = zastąp wszystko)"
+        }
+      },
+      "detect_rooms": {
+        "title": "Wykryj pokoje z Dreame",
+        "description": "Odczytuje obrysy pokoi z kamery mapy dreame-vacuum i tworzy strefy (prostokąty). Tryb merge zachowuje istniejące pokoje.",
+        "data": {
+          "camera_entity": "Encja kamery mapy (opcjonalna)",
+          "mode": "Tryb (merge = dopisz / replace = zastąp)"
+        }
       }
     },
     "error": {
       "name_required": "Nazwa jest wymagana.",
       "name_exists": "Pokój o tej nazwie już istnieje.",
-      "invalid_rooms_yaml": "Niepoprawny YAML pokoi — szczegóły nad formularzem."
+      "invalid_rooms_yaml": "Niepoprawny YAML pokoi — szczegóły nad formularzem.",
+      "no_dreame_rooms": "Nie znaleziono pokoi w encjach Dreame. Upewnij się, że kamera mapy działa i mapa jest wczytana.",
+      "no_rooms_found": "Nie znaleziono pokoi — sprawdź, czy encja kamery mapy ma atrybut „rooms”."
     },
     "abort": {
       "no_rooms": "Nie zdefiniowano jeszcze żadnych pokoi."
