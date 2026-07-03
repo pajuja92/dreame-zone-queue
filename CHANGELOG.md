@@ -4,6 +4,18 @@ Wszystkie istotne zmiany w projekcie. Format oparty o
 [Keep a Changelog](https://keepachangelog.com/pl/1.1.0/),
 wersjonowanie zgodne z [SemVer](https://semver.org/lang/pl/).
 
+## [1.3.3] - 2026-07-03
+
+### Zmienione
+- **Przeprojektowany wygląd karty.** Tryb wąski: pozycje jako zaokrąglone
+  kafelki z kolorowym akcentem statusu (aktywny = kolor motywu + etykieta
+  „sprząta teraz", błąd = czerwony, ukończony = zielony), opisane pola
+  (Ssanie / Mop / Powt.) w siatce, kontrolki o dotykowych rozmiarach
+  (40–44 px), przyciski sterujące w równej siatce 2×2, „Wyczyść" jako
+  przycisk ostrzegawczy. Desktop: nagłówki kolumn kapitalikami, hover
+  wierszy, pulsująca ikona aktywnego pokoju, zaokrąglone selecty,
+  stan pusty z ikoną.
+
 ## [1.3.2] - 2026-07-03
 
 ### Naprawione

@@ -1,6 +1,6 @@
 /* Vacuum Queue Card — bundled with the Dreame Zone Queue integration.
- * v1.3.1: visual editor (ha-form) + card options, grid options for
- * sections layout; off levels, repeats, drag&drop, live active-row edit.
+ * v1.3.3: redesigned styling — card-style rows with status accents on
+ * mobile, labeled fields, touch-sized controls, polished desktop table.
  */
 
 const STATUS_ICON = {
@@ -24,7 +24,7 @@ const DEFAULTS = {
 class VacuumQueueCard extends HTMLElement {
   setConfig(config) {
     this._config = { ...DEFAULTS, ...config };
-    this._fp = null; // wymus ponowny render po zmianie configu
+    this._fp = null;
     if (this._hass) this._render(this._hass.states[this._config.entity]);
   }
   static getStubConfig() { return { entity: "sensor.vacuum_zone_queue" }; }
@@ -103,10 +103,11 @@ class VacuumQueueCard extends HTMLElement {
       return `<tr class="${it.status}" data-id="${it.id}" ${pending ? 'draggable="true"' : ""}>
         <td class="num">${idx + 1}</td>
         <td class="st">${STATUS_ICON[it.status] || ""}</td>
-        <td class="room">${ric(it.room, it.icon)}${it.room}</td>
-        <td class="sx">${editable ? sel(suctionOpts, it.suction, "suction", it.id) : it.suction}</td>
-        <td class="wx">${editable ? sel(waterOpts, it.water, "water", it.id) : it.water}</td>
-        <td class="rep">${pending ? sel(REPEATS, it.repeats, "repeats", it.id, "\u00D7") : it.repeats + "\u00D7"}</td>
+        <td class="room">${ric(it.room, it.icon)}${it.room}
+          ${active ? '<span class="now">sprząta teraz</span>' : ""}</td>
+        <td class="sx"><span class="fl">Ssanie</span>${editable ? sel(suctionOpts, it.suction, "suction", it.id) : `<span class="val">${it.suction}</span>`}</td>
+        <td class="wx"><span class="fl">Mop</span>${editable ? sel(waterOpts, it.water, "water", it.id) : `<span class="val">${it.water}</span>`}</td>
+        <td class="rep"><span class="fl">Powt.</span>${pending ? sel(REPEATS, it.repeats, "repeats", it.id, "\u00D7") : `<span class="val">${it.repeats}\u00D7</span>`}</td>
         <td class="ctl">${ctl}</td>
       </tr>`;
     }).join("");
@@ -114,60 +115,117 @@ class VacuumQueueCard extends HTMLElement {
     this.shadowRoot.innerHTML = `
       <style>
         :host { display: block; }
-        ha-card { padding: ${c.compact ? "8px 10px 10px" : "12px 16px 16px"}; }
-        h2 { margin: 0 0 4px; font-size: 1.1em; display:flex; justify-content:space-between; align-items:center; }
-        .badge { font-size: .75em; padding: 2px 8px; border-radius: 10px;
-                 background: var(--secondary-background-color); color: var(--secondary-text-color); }
-        .badge.running { background: var(--primary-color); color: var(--text-primary-color, #fff); }
-        .sub { color: var(--secondary-text-color); font-size: .85em; margin-bottom: 8px; }
-        table { width: 100%; border-collapse: collapse; font-size: ${c.compact ? ".82em" : ".9em"}; }
-        th { text-align: left; color: var(--secondary-text-color); font-weight: 500;
-             border-bottom: 1px solid var(--divider-color); padding: 4px 6px; }
-        td { padding: ${c.compact ? "3px 4px" : "5px 6px"}; border-bottom: 1px solid var(--divider-color); }
-        tr.active { background: color-mix(in srgb, var(--primary-color) 14%, transparent); font-weight: 600; }
+        ha-card { padding: ${c.compact ? "10px 12px 12px" : "14px 16px 16px"}; }
+
+        h2 { margin: 0 0 2px; font-size: 1.12em; font-weight: 650;
+             display: flex; justify-content: space-between; align-items: center; }
+        .badge { font-size: .7em; font-weight: 700; letter-spacing: .06em;
+                 padding: 3px 10px; border-radius: 999px;
+                 background: var(--secondary-background-color);
+                 color: var(--secondary-text-color); }
+        .badge.running { background: var(--primary-color);
+                         color: var(--text-primary-color, #fff); }
+        .sub { color: var(--secondary-text-color); font-size: .84em; margin-bottom: 10px; }
+
+        table { width: 100%; border-collapse: collapse; font-size: ${c.compact ? ".84em" : ".92em"}; }
+        th { text-align: left; font-size: .72em; font-weight: 600;
+             text-transform: uppercase; letter-spacing: .06em;
+             color: var(--secondary-text-color);
+             border-bottom: 1px solid var(--divider-color); padding: 4px 6px 6px; }
+        td { padding: ${c.compact ? "4px" : "6px"};
+             border-bottom: 1px solid var(--divider-color); vertical-align: middle; }
+        tbody tr:hover { background: color-mix(in srgb, var(--primary-text-color) 4%, transparent); }
+        tr.active { background: color-mix(in srgb, var(--primary-color) 12%, transparent); font-weight: 600; }
         tr.done, tr.skipped { opacity: .55; }
-        tr.error { background: color-mix(in srgb, var(--error-color, red) 14%, transparent); }
+        tr.error { background: color-mix(in srgb, var(--error-color, red) 12%, transparent); }
+        tr.active .st { animation: vqpulse 1.4s ease-in-out infinite; }
+        @keyframes vqpulse { 0%,100% { opacity: 1; } 50% { opacity: .4; } }
         tr.dragover td { border-top: 2px solid var(--primary-color); }
         tr[draggable="true"] { cursor: grab; }
         tr.dragging { opacity: .4; }
-        .num { text-align: center; width: 2em; }
-        .st { width: 1.6em; text-align:center; }
-        .rep { width: 4.5em; }
-        .ctl { white-space: nowrap; text-align: right; width: 8em; }
-        .grip { cursor: grab; color: var(--secondary-text-color); padding: 0 6px; user-select: none; }
+
+        .num { text-align: center; width: 2em; color: var(--secondary-text-color); }
+        .st { width: 1.6em; text-align: center; }
+        .room { font-weight: 500; }
+        .now { display: none; }
+        .rep { width: 4.8em; }
+        .ctl { white-space: nowrap; text-align: right; width: 8.5em; }
+        .fl { display: none; }
+        .val { color: var(--secondary-text-color); }
+        .grip { cursor: grab; color: var(--secondary-text-color);
+                padding: 0 6px; user-select: none; }
+
         select { background: var(--card-background-color); color: var(--primary-text-color);
-                 border: 1px solid var(--divider-color); border-radius: 4px; padding: 2px 4px; }
-        .ib { background: none; border: 1px solid var(--divider-color); border-radius: 4px;
-              color: var(--primary-text-color); cursor: pointer; padding: 2px 6px; margin-left: 3px; }
+                 border: 1px solid var(--divider-color); border-radius: 8px;
+                 padding: 4px 8px; font: inherit; }
+        select:focus { outline: none; border-color: var(--primary-color); }
+        .ib { background: none; border: 1px solid var(--divider-color); border-radius: 8px;
+              color: var(--primary-text-color); cursor: pointer;
+              padding: 3px 8px; margin-left: 4px; }
         .ib:hover { background: var(--secondary-background-color); }
         .ib.danger { border-color: var(--error-color, #d32f2f); color: var(--error-color, #d32f2f); }
-        .empty { padding: 16px 4px; color: var(--secondary-text-color); font-style: italic; }
-        .addrow, .actions { display: flex; gap: 8px; margin-top: ${c.compact ? "8px" : "12px"}; flex-wrap: wrap; align-items: center; }
-        .btn { border: none; border-radius: 6px; padding: ${c.compact ? "5px 10px" : "7px 14px"}; cursor: pointer; font-weight: 600;
-               background: var(--secondary-background-color); color: var(--primary-text-color); }
-        .btn.primary { background: var(--primary-color); color: var(--text-primary-color, #fff); }
-        .btn:disabled { opacity: .4; cursor: default; }
-        .addrow select { padding: 6px; flex: 1; min-width: 110px; }
 
-        /* ---------- tryb waski (karta < 520px, np. telefon) ---------- */
+        .empty { padding: 22px 4px; text-align: center;
+                 color: var(--secondary-text-color); }
+        .empty .e-ic { font-size: 1.9em; display: block; margin-bottom: 6px; opacity: .7; }
+
+        .addrow, .actions { display: flex; gap: 8px; margin-top: ${c.compact ? "10px" : "14px"};
+                            flex-wrap: wrap; align-items: center; }
+        .addrow select { padding: 8px 10px; flex: 1; min-width: 130px; border-radius: 10px; }
+        .btn { border: none; border-radius: 10px; padding: ${c.compact ? "7px 12px" : "9px 16px"};
+               cursor: pointer; font: inherit; font-weight: 600;
+               background: var(--secondary-background-color); color: var(--primary-text-color); }
+        .btn:hover { filter: brightness(1.1); }
+        .btn.primary { background: var(--primary-color); color: var(--text-primary-color, #fff); }
+        .btn.warn { background: none; border: 1px solid var(--error-color, #d32f2f);
+                    color: var(--error-color, #d32f2f); }
+        .btn:disabled { opacity: .4; cursor: default; }
+
+        /* ================= tryb wąski (< 520 px) ================= */
         :host(.narrow) thead { display: none; }
         :host(.narrow) table, :host(.narrow) tbody { display: block; width: 100%; }
-        :host(.narrow) tr { display: flex; flex-wrap: wrap; align-items: center;
-                            gap: 2px 6px; padding: 8px 0;
-                            border-bottom: 1px solid var(--divider-color); }
-        :host(.narrow) td { display: block; border: none; padding: 2px; }
+        :host(.narrow) tr {
+          display: grid;
+          grid-template-columns: auto 1fr 1fr minmax(76px, auto);
+          grid-template-areas: "st room room ctl" "sx sx wx rep";
+          gap: 8px 8px; align-items: center;
+          background: color-mix(in srgb, var(--secondary-background-color) 55%, transparent);
+          border: none; border-left: 4px solid var(--divider-color);
+          border-radius: 14px; padding: 12px; margin: 0 0 10px;
+        }
+        :host(.narrow) tbody tr:hover { background:
+          color-mix(in srgb, var(--secondary-background-color) 55%, transparent); }
+        :host(.narrow) tr.active { border-left-color: var(--primary-color);
+          background: color-mix(in srgb, var(--primary-color) 10%, transparent); }
+        :host(.narrow) tr.done, :host(.narrow) tr.skipped {
+          border-left-color: var(--success-color, #4caf50); opacity: .6; }
+        :host(.narrow) tr.error { border-left-color: var(--error-color, #d32f2f);
+          background: color-mix(in srgb, var(--error-color, red) 10%, transparent); }
+        :host(.narrow) td { display: block; border: none; padding: 0; }
         :host(.narrow) td.num { display: none; }
-        :host(.narrow) td.st { order: 1; width: auto; }
-        :host(.narrow) td.room { order: 2; flex: 1 1 auto; font-weight: 600; }
-        :host(.narrow) td.ctl { order: 3; width: auto; margin-left: auto; }
-        :host(.narrow) td.sx { order: 4; flex: 1 1 32%; }
-        :host(.narrow) td.wx { order: 5; flex: 1 1 38%; }
-        :host(.narrow) td.rep { order: 6; flex: 1 1 18%; width: auto; }
-        :host(.narrow) td.sx select, :host(.narrow) td.wx select,
-        :host(.narrow) td.rep select { width: 100%; }
-        :host(.narrow) .grip { display: none; }   /* dnd i tak nie dziala na dotyku */
+        :host(.narrow) td.st { grid-area: st; width: auto; font-size: 1.05em; }
+        :host(.narrow) td.room { grid-area: room; font-weight: 650; font-size: 1.04em;
+                                 overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+        :host(.narrow) .now { display: block; font-size: .7em; font-weight: 600;
+          text-transform: uppercase; letter-spacing: .07em;
+          color: var(--primary-color); margin-top: 1px; }
+        :host(.narrow) td.ctl { grid-area: ctl; justify-self: end; width: auto; }
+        :host(.narrow) td.sx { grid-area: sx; }
+        :host(.narrow) td.wx { grid-area: wx; }
+        :host(.narrow) td.rep { grid-area: rep; width: auto; }
+        :host(.narrow) .fl { display: block; font-size: .66em; font-weight: 600;
+          text-transform: uppercase; letter-spacing: .07em;
+          color: var(--secondary-text-color); margin: 0 0 3px 2px; }
+        :host(.narrow) .val { display: block; padding: 8px 2px; }
+        :host(.narrow) select { width: 100%; height: 40px; border-radius: 10px;
+          padding: 6px 10px; font-size: .95em; }
+        :host(.narrow) .ib { min-width: 38px; height: 36px; margin-left: 6px;
+          border-radius: 10px; font-size: .95em; }
+        :host(.narrow) .grip { display: none; }
         :host(.narrow) tr.dragover td { border-top: none; }
-        :host(.narrow) .actions .btn { flex: 1 1 45%; }
+        :host(.narrow) .addrow select, :host(.narrow) .addrow .btn { height: 44px; border-radius: 12px; }
+        :host(.narrow) .actions { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
+        :host(.narrow) .actions .btn { height: 44px; border-radius: 12px; }
       </style>
       <ha-card>
         ${c.show_header ? `<h2>${c.title}
@@ -178,7 +236,7 @@ class VacuumQueueCard extends HTMLElement {
           ? `<table><thead><tr>
                <th>#</th><th></th><th>Pokój</th><th>Ssanie</th><th>Mop</th><th>Powt.</th><th></th>
              </tr></thead><tbody>${rows}</tbody></table>`
-          : `<div class="empty">Kolejka pusta — dodaj pokoje poniżej.</div>`}
+          : `<div class="empty"><span class="e-ic">\u{1F9F9}</span>Kolejka pusta — dodaj pokoje poniżej.</div>`}
         ${c.show_add_row ? `<div class="addrow">
           <select id="addRoom">${rooms.map((r) => `<option value="${r}">${ric(r)}${r}</option>`).join("")}</select>
           <button class="btn" id="add" ${rooms.length ? "" : "disabled"}>+ Dodaj</button>
@@ -187,7 +245,7 @@ class VacuumQueueCard extends HTMLElement {
           <button class="btn primary" id="start">\u25B6 Start</button>
           <button class="btn" id="pause">\u23F8 Pauza</button>
           <button class="btn" id="skip">\u23ED Pomiń</button>
-          <button class="btn" id="clear">\u2715 Wyczyść</button>
+          <button class="btn warn" id="clear">\u2715 Wyczyść</button>
         </div>` : ""}
       </ha-card>`;
 
@@ -251,7 +309,6 @@ class VacuumQueueCard extends HTMLElement {
         this._call("set_params", { item_id: Number(s.dataset.id), repeats: Number(s.value) });
     });
 
-    // ---- drag & drop (tylko wiersze pending) ----
     let dragId = null;
     root.querySelectorAll('tr[draggable="true"]').forEach((tr) => {
       tr.addEventListener("dragstart", (e) => {
@@ -283,7 +340,7 @@ class VacuumQueueCard extends HTMLElement {
   }
 }
 
-/* ---------------- visual editor (zakladka Konfiguracja) ---------------- */
+/* ---------------- visual editor ---------------- */
 
 const EDITOR_SCHEMA = [
   { name: "entity", required: true, selector: { entity: { domain: "sensor" } } },
