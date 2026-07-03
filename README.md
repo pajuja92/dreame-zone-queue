@@ -2,11 +2,23 @@
 
 # Dreame Zone Queue
 
-<img src="https://raw.githubusercontent.com/pajuja92/dreame-zone-queue/main/images/screenshots/card_empty.png" width="48%"><img src="https://raw.githubusercontent.com/pajuja92/dreame-zone-queue/main/images/screenshots/card_queue.png" width="48%">
+<p align="center">
+<img src="https://raw.githubusercontent.com/pajuja92/dreame-zone-queue/main/images/screenshots/card_empty.png" width="40%">&nbsp;&nbsp;&nbsp;&nbsp;<img src="https://raw.githubusercontent.com/pajuja92/dreame-zone-queue/main/images/screenshots/card_queue.png" width="40%">
+</p>
 
-<img src="https://raw.githubusercontent.com/pajuja92/dreame-zone-queue/main/images/screenshots/integration.png" width="48%"><img src="https://raw.githubusercontent.com/pajuja92/dreame-zone-queue/main/images/screenshots/options.png" width="48%">
+<p align="center"><i>Karta Lovelace — pusta kolejka i kolejka z pokojami</i></p>
 
-<img src="https://raw.githubusercontent.com/pajuja92/dreame-zone-queue/main/images/screenshots/yaml_editor.png" width="48%">
+<p align="center">
+<img src="https://raw.githubusercontent.com/pajuja92/dreame-zone-queue/main/images/screenshots/integration.png" width="80%">
+</p>
+
+<p align="center"><i>Strona integracji z ikoną</i></p>
+
+<p align="center">
+<img src="https://raw.githubusercontent.com/pajuja92/dreame-zone-queue/main/images/screenshots/options.png" width="40%">&nbsp;&nbsp;&nbsp;&nbsp;<img src="https://raw.githubusercontent.com/pajuja92/dreame-zone-queue/main/images/screenshots/yaml_editor.png" width="40%">
+</p>
+
+<p align="center"><i>Panel opcji · Masowa edycja pokoi (YAML)</i></p>
 
 ## 🟢 Instalacja krok po kroku (dla początkujących)
 
