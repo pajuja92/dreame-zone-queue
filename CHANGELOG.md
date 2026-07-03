@@ -4,6 +4,19 @@ Wszystkie istotne zmiany w projekcie. Format oparty o
 [Keep a Changelog](https://keepachangelog.com/pl/1.1.0/),
 wersjonowanie zgodne z [SemVer](https://semver.org/lang/pl/).
 
+## [1.5.3] - 2026-07-04
+
+### Naprawione
+- **Ucięte nazwy pokoi w trybie wąskim**: gdy strzałki ▲▼ są ukryte (lub
+  karta jest w trybie podglądu), nazwa pokoju zajmuje teraz dwie kolumny
+  zamiast zostawiać pustą przestrzeń zarezerwowaną pod przyciski.
+- **Czytelność na telefonie**: typografia trybu wąskiego podniesiona do
+  rozmiarów mobilnych — pola 16 px (co przy okazji eliminuje auto-zoom
+  Safari/iOS przy tapnięciu w select), nazwa pokoju 17 px, etykiety 12 px,
+  przyciski 40–42 px; wyraźniejszy uchwyt na krawędzi karty.
+- Placeholder `YOUR_GITHUB_USER` w manifest.json zastąpiony właściwym
+  adresem repozytorium (naprawia link pomocy „?" na stronie integracji).
+
 ## [1.5.0] - 2026-07-04
 
 ### Dodane

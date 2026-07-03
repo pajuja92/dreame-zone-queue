@@ -121,7 +121,8 @@ class VacuumQueueCard extends HTMLElement {
       const editable = !ro && (pending || active);
       const suctionOpts = active ? SUCTION.filter((o) => o !== "off") : SUCTION;
       const waterOpts = active ? WATER.filter((o) => o !== "off") : WATER;
-      return `<tr class="${it.status}" data-id="${it.id}" ${pending && !ro ? 'draggable="true"' : ""}>
+      const slim = ro || !c.show_arrows;
+      return `<tr class="${it.status}${slim ? " slim" : ""}" data-id="${it.id}" ${pending && !ro ? 'draggable="true"' : ""}>
         ${gripCell}
         <td class="num">${idx + 1}</td>
         <td class="st">${STATUS_ICON[it.status] || ""}</td>
@@ -242,7 +243,8 @@ class VacuumQueueCard extends HTMLElement {
         :host(.narrow) td.num { display: none; }
         :host(.narrow) td.st { display: none; }
         :host(.narrow) .rst { display: inline; }
-        :host(.narrow) td.room { grid-area: room; font-weight: 650; font-size: 1.04em;
+        :host(.narrow) table { font-size: 16px; }
+        :host(.narrow) td.room { grid-area: room; font-weight: 650; font-size: 17px;
                                  overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
         :host(.narrow) .now { display: block; font-size: .7em; font-weight: 600;
           text-transform: uppercase; letter-spacing: .07em;
@@ -251,14 +253,16 @@ class VacuumQueueCard extends HTMLElement {
         :host(.narrow) td.sx { grid-area: sx; }
         :host(.narrow) td.wx { grid-area: wx; }
         :host(.narrow) td.rep { grid-area: rep; width: auto; }
-        :host(.narrow) .fl { display: block; font-size: .66em; font-weight: 600;
+        :host(.narrow) .fl { display: block; font-size: 12px; font-weight: 600;
           text-transform: uppercase; letter-spacing: .07em;
           color: var(--secondary-text-color); margin: 0 0 3px 2px; }
-        :host(.narrow) .val { display: block; padding: 8px 2px; }
-        :host(.narrow) select { width: 100%; height: 40px; border-radius: 10px;
-          padding: 6px 10px; font-size: .95em; }
-        :host(.narrow) .ib { min-width: 38px; height: 36px; margin-left: 6px;
-          border-radius: 10px; font-size: .95em; }
+        :host(.narrow) .val { display: block; padding: 10px 2px; font-size: 16px; }
+        :host(.narrow) select { width: 100%; height: 44px; border-radius: 10px;
+          padding: 8px 10px; font-size: 16px; }
+        :host(.narrow) .ib { min-width: 42px; height: 40px; margin-left: 6px;
+          border-radius: 10px; font-size: 16px; }
+        :host(.narrow) .now { font-size: 11px; }
+        :host(.narrow) .rst { font-size: 16px; }
         :host(.narrow) .grip { display: inline-flex; align-items: center; justify-content: center;
           min-width: 36px; height: 36px; border: 1px solid var(--divider-color);
           border-radius: 10px; touch-action: none; }
@@ -280,6 +284,15 @@ class VacuumQueueCard extends HTMLElement {
         :host(.narrow) td.gripc .grip { display: flex; width: 100%; height: 100%;
           align-items: center; justify-content: center; border: none;
           border-radius: 0; min-width: 0; margin: 0; padding: 0; }
+        :host(.narrow) tr.slim { grid-template-areas: "room room ctl" "sx wx rep"; }
+        :host(.narrow) .v-left tr.slim {
+          grid-template-areas: "grip room room ctl" "grip sx wx rep"; }
+        :host(.narrow) .v-right tr.slim {
+          grid-template-areas: "room room ctl grip" "sx wx rep grip"; }
+        :host(.narrow) .v-top tr.slim {
+          grid-template-areas: "grip grip grip" "room room ctl" "sx wx rep"; }
+        :host(.narrow) td.gripc .grip { font-size: 1.2em;
+          color: var(--secondary-text-color); }
         :host(.narrow) .v-left td.gripc { margin: -12px 2px -12px -12px;
           border-right: 1px solid var(--divider-color); }
         :host(.narrow) .v-right td.gripc { margin: -12px -12px -12px 2px;
