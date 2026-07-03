@@ -1,4 +1,4 @@
-<p align="center"><img src="https://raw.githubusercontent.com/pajuja92/dreame-zone-queue/main/images/logo.png" alt="Dreame Zone Queue" width="560"/></p>
+![Dreame Zone Queue](https://raw.githubusercontent.com/pajuja92/dreame-zone-queue/main/images/logo.png)
 
 # Dreame Zone Queue
 
