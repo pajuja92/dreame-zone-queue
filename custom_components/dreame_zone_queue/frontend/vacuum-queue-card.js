@@ -18,6 +18,9 @@ const DEFAULTS = {
   show_robot_state: true,
   show_add_row: true,
   show_actions: true,
+  show_progress: true,
+  show_presets: true,
+  read_only: false,
   compact: false,
 };
 
@@ -79,6 +82,10 @@ class VacuumQueueCard extends HTMLElement {
       return i ? i + " " : "";
     };
     const running = st.state === "running";
+    const ro = !!c.read_only;
+    const presets = st.attributes.presets || [];
+    const prog = st.attributes.progress || { done: 0, total: 0 };
+    const etaS = st.attributes.eta_s;
     const vac = st.attributes.vacuum_entity;
     const vacState = vac && this._hass.states[vac] ? this._hass.states[vac].state : "?";
 
@@ -92,15 +99,15 @@ class VacuumQueueCard extends HTMLElement {
       const active = it.status === "active";
       const del = `<button class="ib del ${active ? "danger" : ""}" data-id="${it.id}"
                     title="${active ? "Zakończ i usuń" : "Usuń"}">\u2715</button>`;
-      const ctl = pending
+      const ctl = ro ? "" : pending
         ? `<span class="grip" title="Przeciągnij">\u2630</span>` +
           `<button class="ib up" data-id="${it.id}" title="Wyżej">\u25B2</button>` +
           `<button class="ib down" data-id="${it.id}" title="Niżej">\u25BC</button>` + del
         : del;
-      const editable = pending || active;
+      const editable = !ro && (pending || active);
       const suctionOpts = active ? SUCTION.filter((o) => o !== "off") : SUCTION;
       const waterOpts = active ? WATER.filter((o) => o !== "off") : WATER;
-      return `<tr class="${it.status}" data-id="${it.id}" ${pending ? 'draggable="true"' : ""}>
+      return `<tr class="${it.status}" data-id="${it.id}" ${pending && !ro ? 'draggable="true"' : ""}>
         <td class="num">${idx + 1}</td>
         <td class="st">${STATUS_ICON[it.status] || ""}</td>
         <td class="room">${ric(it.room, it.icon)}${it.room}
@@ -153,7 +160,7 @@ class VacuumQueueCard extends HTMLElement {
         .fl { display: none; }
         .val { color: var(--secondary-text-color); }
         .grip { cursor: grab; color: var(--secondary-text-color);
-                padding: 0 6px; user-select: none; }
+                padding: 0 6px; user-select: none; touch-action: none; }
 
         select { background: var(--card-background-color); color: var(--primary-text-color);
                  border: 1px solid var(--divider-color); border-radius: 8px;
@@ -165,6 +172,16 @@ class VacuumQueueCard extends HTMLElement {
         .ib:hover { background: var(--secondary-background-color); }
         .ib.danger { border-color: var(--error-color, #d32f2f); color: var(--error-color, #d32f2f); }
 
+        .prog { display: flex; align-items: center; gap: 10px; margin: 2px 0 12px; }
+        .pbar { flex: 1; height: 6px; border-radius: 999px;
+                background: var(--secondary-background-color); overflow: hidden; }
+        .pfill { height: 100%; border-radius: 999px;
+                 background: var(--primary-color); transition: width .4s ease; }
+        .ptxt { font-size: .8em; color: var(--secondary-text-color); white-space: nowrap; }
+        .presets { display: flex; gap: 8px; margin-top: 10px; flex-wrap: wrap; align-items: center; }
+        .presets select { padding: 8px 10px; flex: 1; min-width: 130px; border-radius: 10px;
+                          background: var(--card-background-color); color: var(--primary-text-color);
+                          border: 1px solid var(--divider-color); }
         .empty { padding: 22px 4px; text-align: center;
                  color: var(--secondary-text-color); }
         .empty .e-ic { font-size: 1.9em; display: block; margin-bottom: 6px; opacity: .7; }
@@ -221,7 +238,10 @@ class VacuumQueueCard extends HTMLElement {
           padding: 6px 10px; font-size: .95em; }
         :host(.narrow) .ib { min-width: 38px; height: 36px; margin-left: 6px;
           border-radius: 10px; font-size: .95em; }
-        :host(.narrow) .grip { display: none; }
+        :host(.narrow) .grip { display: inline-flex; align-items: center; justify-content: center;
+          min-width: 36px; height: 36px; border: 1px solid var(--divider-color);
+          border-radius: 10px; touch-action: none; }
+        :host(.narrow) .presets select, :host(.narrow) .presets .btn { height: 44px; border-radius: 12px; }
         :host(.narrow) tr.dragover td { border-top: none; }
         :host(.narrow) .addrow select, :host(.narrow) .addrow .btn { height: 44px; border-radius: 12px; }
         :host(.narrow) .actions { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
@@ -232,16 +252,30 @@ class VacuumQueueCard extends HTMLElement {
           <span class="badge ${running ? "running" : ""}">${running ? "RUNNING" : "IDLE"}</span>
         </h2>` : ""}
         ${c.show_robot_state ? `<div class="sub">robot: ${vacState}</div>` : ""}
+        ${c.show_progress && prog.total > 0 ? `<div class="prog">
+          <div class="pbar"><div class="pfill" style="width:${Math.round(100 * prog.done / prog.total)}%"></div></div>
+          <span class="ptxt">${prog.done}/${prog.total} pokoi${etaS ? ` \u00B7 ~${Math.max(1, Math.round(etaS / 60))} min` : ""}</span>
+        </div>` : ""}
         ${items.length
           ? `<table><thead><tr>
                <th>#</th><th></th><th>Pokój</th><th>Ssanie</th><th>Mop</th><th>Powt.</th><th></th>
              </tr></thead><tbody>${rows}</tbody></table>`
           : `<div class="empty"><span class="e-ic">\u{1F9F9}</span>Kolejka pusta — dodaj pokoje poniżej.</div>`}
-        ${c.show_add_row ? `<div class="addrow">
+        ${c.show_add_row && !ro ? `<div class="addrow">
           <select id="addRoom">${rooms.map((r) => `<option value="${r}">${ric(r)}${r}</option>`).join("")}</select>
           <button class="btn" id="add" ${rooms.length ? "" : "disabled"}>+ Dodaj</button>
         </div>` : ""}
-        ${c.show_actions ? `<div class="actions">
+        ${c.show_presets && !ro ? `<div class="presets">
+          <select id="presetSel" ${presets.length ? "" : "disabled"}>
+            ${presets.length
+              ? presets.map((p) => `<option value="${p}">\u2B50 ${p}</option>`).join("")
+              : `<option>\u2014 brak preset\u00F3w \u2014</option>`}
+          </select>
+          <button class="btn" id="pLoad" ${presets.length ? "" : "disabled"} title="Wczytaj preset (zast\u0119puje kolejk\u0119)">\u25B8 Wczytaj</button>
+          <button class="btn" id="pSave" title="Zapisz bie\u017C\u0105c\u0105 kolejk\u0119 jako preset">\uD83D\uDCBE</button>
+          <button class="btn warn" id="pDel" ${presets.length ? "" : "disabled"} title="Usu\u0144 preset">\uD83D\uDDD1</button>
+        </div>` : ""}
+        ${c.show_actions && !ro ? `<div class="actions">
           <button class="btn primary" id="start">\u25B6 Start</button>
           <button class="btn" id="pause">\u23F8 Pauza</button>
           <button class="btn" id="skip">\u23ED Pomiń</button>
@@ -309,6 +343,48 @@ class VacuumQueueCard extends HTMLElement {
         this._call("set_params", { item_id: Number(s.dataset.id), repeats: Number(s.value) });
     });
 
+    const psel = root.getElementById("presetSel");
+    on("pLoad", () => psel && this._call("load_preset", { name: psel.value, mode: "replace" }));
+    on("pSave", () => {
+      const n = prompt("Nazwa presetu:", psel && !psel.disabled ? psel.value : "");
+      if (n && n.trim()) this._call("save_preset", { name: n.trim() });
+    });
+    on("pDel", () => {
+      if (psel && confirm(`Usun\u0105\u0107 preset "${psel.value}"?`))
+        this._call("delete_preset", { name: psel.value });
+    });
+
+    // ---- przeciaganie dotykiem / mysza za uchwyt (pointer events) ----
+    root.querySelectorAll(".grip").forEach((g) => {
+      g.addEventListener("pointerdown", (e) => {
+        e.preventDefault();
+        const srcTr = g.closest("tr");
+        const srcId = Number(srcTr.dataset.id);
+        srcTr.classList.add("dragging");
+        const hover = (ev) => {
+          const el = root.elementFromPoint(ev.clientX, ev.clientY);
+          const t = el && el.closest ? el.closest('tr[draggable="true"]') : null;
+          root.querySelectorAll("tr.dragover").forEach((x) => x.classList.remove("dragover"));
+          if (t && Number(t.dataset.id) !== srcId) t.classList.add("dragover");
+          return t;
+        };
+        const move = (ev) => { ev.preventDefault(); hover(ev); };
+        const up = (ev) => {
+          window.removeEventListener("pointermove", move);
+          window.removeEventListener("pointerup", up);
+          window.removeEventListener("pointercancel", up);
+          srcTr.classList.remove("dragging");
+          const t = hover(ev);
+          root.querySelectorAll("tr.dragover").forEach((x) => x.classList.remove("dragover"));
+          if (t && Number(t.dataset.id) !== srcId)
+            this._call("move", { item_id: srcId, new_position: posOf(t.dataset.id) });
+        };
+        window.addEventListener("pointermove", move, { passive: false });
+        window.addEventListener("pointerup", up);
+        window.addEventListener("pointercancel", up);
+      });
+    });
+
     let dragId = null;
     root.querySelectorAll('tr[draggable="true"]').forEach((tr) => {
       tr.addEventListener("dragstart", (e) => {
@@ -353,6 +429,9 @@ const EDITOR_SCHEMA = [
       { name: "show_robot_state", selector: { boolean: {} } },
       { name: "show_add_row", selector: { boolean: {} } },
       { name: "show_actions", selector: { boolean: {} } },
+      { name: "show_progress", selector: { boolean: {} } },
+      { name: "show_presets", selector: { boolean: {} } },
+      { name: "read_only", selector: { boolean: {} } },
       { name: "compact", selector: { boolean: {} } },
     ],
   },
@@ -365,6 +444,9 @@ const EDITOR_LABELS = {
   show_robot_state: "Pokaż stan robota",
   show_add_row: "Pokaż dodawanie pokoi",
   show_actions: "Pokaż przyciski sterujące",
+  show_progress: "Pokaż pasek postępu i ETA",
+  show_presets: "Pokaż presety",
+  read_only: "Tylko podgląd (bez kontrolek)",
   compact: "Tryb kompaktowy",
 };
 

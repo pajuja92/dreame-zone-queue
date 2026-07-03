@@ -50,6 +50,8 @@ class QueueManager:
         self._next_id: int = 1
         self._dispatched_at: float = 0.0
         self._revision: int = 0
+        self.presets: dict[str, list] = {}
+        self.stats: dict[str, dict] = {}
         self._unsub_state: Callable | None = None
         self._unsub_timer: Callable | None = None
 
@@ -87,6 +89,8 @@ class QueueManager:
         data = await self._store.async_load() or {}
         self.queue = data.get("queue", [])
         self._next_id = data.get("next_id", 1)
+        self.presets = data.get("presets", {})
+        self.stats = data.get("stats", {})
         # After a restart the robot state is unknown -> never resume blindly.
         self.running = False
         for item in self.queue:
@@ -109,7 +113,12 @@ class QueueManager:
 
     async def _save(self) -> None:
         await self._store.async_save(
-            {"queue": self.queue, "next_id": self._next_id}
+            {
+                "queue": self.queue,
+                "next_id": self._next_id,
+                "presets": self.presets,
+                "stats": self.stats,
+            }
         )
 
     @callback
@@ -309,6 +318,60 @@ class QueueManager:
             options={**self.entry.options, CONF_ROOMS: current},
         )
 
+
+    # ------------------------------------------------------------------
+    # presets
+    # ------------------------------------------------------------------
+    async def async_save_preset(self, name: str) -> None:
+        name = (name or "").strip()
+        if not name:
+            _LOGGER.error("Preset name is required")
+            return
+        if not self.queue:
+            _LOGGER.warning("Queue is empty — nothing to save as preset '%s'", name)
+            return
+        self.presets[name] = [
+            {"room": i["room"], "suction": i["suction"],
+             "water": i["water"], "repeats": i["repeats"]}
+            for i in self.queue
+        ]
+        _LOGGER.info("Preset '%s' saved (%d rooms)", name, len(self.queue))
+        self._notify()
+
+    async def async_load_preset(self, name: str, mode: str = "replace") -> None:
+        preset = self.presets.get(name)
+        if preset is None:
+            _LOGGER.error("Unknown preset '%s'", name)
+            return
+        if mode == "replace":
+            self.queue = [i for i in self.queue if i["status"] == STATUS_ACTIVE]
+        for it in preset:
+            base = self.rooms.get(it["room"])
+            if base is None:
+                _LOGGER.warning(
+                    "Preset '%s': room '%s' no longer defined — skipped",
+                    name, it["room"],
+                )
+                continue
+            self.queue.append(
+                {
+                    "id": self._next_id,
+                    "room": it["room"],
+                    "icon": base.get("icon", ""),
+                    "zone": base["zone"],
+                    "suction": it.get("suction", base.get("suction", "standard")),
+                    "water": it.get("water", base.get("water", "moist")),
+                    "repeats": int(it.get("repeats", base.get("repeats", 1))),
+                    "status": STATUS_PENDING,
+                }
+            )
+            self._next_id += 1
+        self._notify()
+
+    async def async_delete_preset(self, name: str) -> None:
+        if self.presets.pop(name, None) is not None:
+            self._notify()
+
     # ------------------------------------------------------------------
     # orchestration
     # ------------------------------------------------------------------
@@ -338,6 +401,7 @@ class QueueManager:
             return
 
         nxt["status"] = STATUS_ACTIVE
+        nxt["started_at"] = time.time()
         self._dispatched_at = time.monotonic()
         self._notify()
 
@@ -421,6 +485,14 @@ class QueueManager:
             return
         if old.state == "cleaning" and new.state in self.finished_states:
             item["status"] = STATUS_DONE
+            started = item.get("started_at") or 0
+            duration = time.time() - started if started else 0
+            if 30 < duration < 4 * 3600:
+                per_pass = duration / max(1, item.get("repeats", 1))
+                s = self.stats.setdefault(item["room"], {"avg_s": per_pass, "n": 0})
+                n = min(s.get("n", 0), 9)
+                s["avg_s"] = (s["avg_s"] * n + per_pass) / (n + 1)
+                s["n"] = n + 1
             _LOGGER.info("Room '%s' finished (state: %s)", item["room"], new.state)
             self._notify()
             self._schedule_dispatch(self.delay_between_s)
@@ -428,11 +500,31 @@ class QueueManager:
     # ------------------------------------------------------------------
     # state exposed to the sensor / card
     # ------------------------------------------------------------------
+    def _eta_seconds(self) -> int | None:
+        avgs = [s["avg_s"] for s in self.stats.values() if s.get("avg_s")]
+        global_avg = sum(avgs) / len(avgs) if avgs else None
+        total = 0.0
+        for item in self.queue:
+            avg = self.stats.get(item["room"], {}).get("avg_s") or global_avg
+            if avg is None:
+                return None
+            if item["status"] == STATUS_PENDING:
+                total += avg * item.get("repeats", 1)
+            elif item["status"] == STATUS_ACTIVE:
+                elapsed = time.time() - (item.get("started_at") or time.time())
+                total += max(avg * item.get("repeats", 1) - elapsed, 0)
+        return int(total) if total > 0 else None
+
     @property
     def snapshot(self) -> dict[str, Any]:
+        finished = sum(1 for i in self.queue
+                       if i["status"] in ("done", "skipped"))
         return {
             "state": "running" if self.running else "idle",
             "revision": self._revision,
+            "progress": {"done": finished, "total": len(self.queue)},
+            "eta_s": self._eta_seconds(),
+            "presets": sorted(self.presets.keys()),
             "items": [{**i, "zone": list(i["zone"])} for i in self.queue],
             "rooms": sorted(self.rooms.keys()),
             "room_icons": {n: r.get("icon", "") for n, r in self.rooms.items()},

@@ -25,6 +25,8 @@ i dopiero po jej ukończeniu wysyła następną według aktualnego stanu kolejki
 - **Własna karta Lovelace** (`custom:vacuum-queue-card`) dołączona do
   integracji: tabelka z kolejką, strzałki ▲▼ do zmiany kolejności, dropdowny
   ssania/mopa per wiersz, dodawanie pokoi, przyciski sterujące.
+- **Presety kolejek** (np. „piątkowe sprzątanie") — zapis/wczytanie z karty lub serwisami.
+- **Pasek postępu i ETA** — szacowany czas na bazie historii sprzątań per pokój.
 - **Persystencja** — kolejka przeżywa restart HA (po restarcie zawsze w stanie
   spauzowanym, aktywny pokój wraca do `pending`).
 

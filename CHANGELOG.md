@@ -4,6 +4,24 @@ Wszystkie istotne zmiany w projekcie. Format oparty o
 [Keep a Changelog](https://keepachangelog.com/pl/1.1.0/),
 wersjonowanie zgodne z [SemVer](https://semver.org/lang/pl/).
 
+## [1.4.0] - 2026-07-03
+
+### Dodane
+- **Presety kolejek**: zapis bieżącej kolejki pod nazwą, wczytywanie jednym
+  tapnięciem (tryb `replace` zachowuje aktywny pokój, `append` dokłada na
+  koniec) i usuwanie — z karty oraz serwisami `save_preset` / `load_preset` /
+  `delete_preset`. Presety przeżywają restart HA; pokoje usunięte
+  z konfiguracji są przy wczytywaniu pomijane z ostrzeżeniem.
+- **Pasek postępu i ETA** w nagłówku karty („2/5 pokoi · ~24 min").
+  Integracja uczy się czasów sprzątania per pokój (średnia krocząca
+  z ostatnich przebiegów, normalizowana liczbą powtórzeń) i szacuje
+  pozostały czas kolejki.
+- **Zmiana kolejności dotykiem**: przeciąganie wierszy za uchwyt ☰
+  (pointer events) — działa na telefonie i myszą; strzałki ▲▼ pozostają.
+- **Tryb „tylko podgląd"** (`read_only`) — karta bez żadnych kontrolek,
+  np. na tablet ścienny; przełącznik w edytorze wizualnym, obok nowych
+  przełączników paska postępu i presetów.
+
 ## [1.3.3] - 2026-07-03
 
 ### Zmienione

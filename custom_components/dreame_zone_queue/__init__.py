@@ -1,6 +1,8 @@
 """Dreame Zone Queue — queue-based zone cleaning for dreame-vacuum."""
 from __future__ import annotations
 
+from functools import partial
+
 import logging
 from pathlib import Path
 
@@ -193,4 +195,30 @@ def _register_services(hass: HomeAssistant) -> None:
         vol.Schema({}),
         supports_response=SupportsResponse.ONLY,
     )
+
+    async def preset_call(call: ServiceCall, method: str = "") -> None:
+        manager = _get_manager(hass)
+        if manager is None:
+            raise ServiceValidationError("No configured Dreame Zone Queue instance")
+        await getattr(manager, method)(**call.data)
+
+    hass.services.async_register(
+        DOMAIN, "save_preset",
+        partial(preset_call, method="async_save_preset"),
+        vol.Schema({vol.Required("name"): cv.string}),
+    )
+    hass.services.async_register(
+        DOMAIN, "load_preset",
+        partial(preset_call, method="async_load_preset"),
+        vol.Schema({
+            vol.Required("name"): cv.string,
+            vol.Optional("mode", default="replace"): vol.In(["replace", "append"]),
+        }),
+    )
+    hass.services.async_register(
+        DOMAIN, "delete_preset",
+        partial(preset_call, method="async_delete_preset"),
+        vol.Schema({vol.Required("name"): cv.string}),
+    )
+
 

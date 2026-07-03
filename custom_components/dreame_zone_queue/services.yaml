@@ -68,3 +68,32 @@ import_rooms:
 export_rooms:
   name: Export rooms
   description: Returns all room definitions (as an object and as ready-to-paste YAML).
+save_preset:
+  name: Save preset
+  description: Saves the current queue (rooms + parameters, in order) as a named preset.
+  fields:
+    name:
+      name: Preset name
+      required: true
+      example: Piątkowe sprzątanie
+      selector: {text: {}}
+load_preset:
+  name: Load preset
+  description: Loads a preset into the queue.
+  fields:
+    name:
+      name: Preset name
+      required: true
+      selector: {text: {}}
+    mode:
+      name: Mode
+      description: replace = replace queue (keeps the active room), append = add at the end
+      default: replace
+      selector: {select: {options: [replace, append]}}
+delete_preset:
+  name: Delete preset
+  fields:
+    name:
+      name: Preset name
+      required: true
+      selector: {text: {}}
