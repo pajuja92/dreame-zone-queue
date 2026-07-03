@@ -130,6 +130,10 @@ Przejście stanu encji odkurzacza `cleaning → returning/docked/idle/charging`
 przesuwa kolejki; błąd startu strefy oznacza pozycję jako `error` i pauzuje
 całą kolejkę.
 
+## Historia zmian
+
+Zobacz [CHANGELOG.md](CHANGELOG.md).
+
 ## Ograniczenia / plany
 
 - Reorder w karcie przez strzałki ▲▼ (drag&drop w planach).
