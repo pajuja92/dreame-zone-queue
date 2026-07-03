@@ -113,6 +113,7 @@ class VacuumQueueCard extends HTMLElement {
 
     this.shadowRoot.innerHTML = `
       <style>
+        :host { display: block; }
         ha-card { padding: ${c.compact ? "8px 10px 10px" : "12px 16px 16px"}; }
         h2 { margin: 0 0 4px; font-size: 1.1em; display:flex; justify-content:space-between; align-items:center; }
         .badge { font-size: .75em; padding: 2px 8px; border-radius: 10px;
@@ -189,6 +190,9 @@ class VacuumQueueCard extends HTMLElement {
           <button class="btn" id="clear">\u2715 Wyczyść</button>
         </div>` : ""}
       </ha-card>`;
+
+    const w = this.getBoundingClientRect().width;
+    if (w > 0) this.classList.toggle("narrow", w < 520);
 
     const root = this.shadowRoot;
     const byId = (id) => items.find((i) => i.id === Number(id));

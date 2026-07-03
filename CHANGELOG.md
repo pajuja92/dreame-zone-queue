@@ -4,6 +4,17 @@ Wszystkie istotne zmiany w projekcie. Format oparty o
 [Keep a Changelog](https://keepachangelog.com/pl/1.1.0/),
 wersjonowanie zgodne z [SemVer](https://semver.org/lang/pl/).
 
+## [1.3.2] - 2026-07-03
+
+### Naprawione
+- **Tryb wąski karty nie aktywował się**: element karty miał domyślne
+  `display: inline`, dla którego ResizeObserver raportuje szerokość 0,
+  więc próg 520 px nigdy nie był osiągany. Dodano `:host { display: block }`
+  oraz natychmiastowy pomiar szerokości przy renderze.
+- Podbicie wersji unieważnia cache zasobu karty (`?v=1.3.2`) — poprzednia
+  poprawka responsywności nie zmieniała URL-a i mogła nie docierać do
+  klientów z zapisanym cache (zwłaszcza aplikacji mobilnej).
+
 ## [1.3.1] - 2026-07-03
 
 ### Dodane
