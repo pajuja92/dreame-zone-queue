@@ -49,6 +49,7 @@ class QueueManager:
         self.running: bool = False
         self._next_id: int = 1
         self._dispatched_at: float = 0.0
+        self._revision: int = 0
         self._unsub_state: Callable | None = None
         self._unsub_timer: Callable | None = None
 
@@ -113,6 +114,7 @@ class QueueManager:
 
     @callback
     def _notify(self) -> None:
+        self._revision += 1
         async_dispatcher_send(self.hass, SIGNAL_QUEUE_UPDATED)
         self.hass.async_create_task(self._save())
 
@@ -127,6 +129,44 @@ class QueueManager:
 
     def _active(self):
         return next((i for i in self.queue if i["status"] == STATUS_ACTIVE), None)
+
+
+    # ------------------------------------------------------------------
+    # select-entity helpers
+    # ------------------------------------------------------------------
+    _ALIASES = {
+        "quiet": ("quiet", "silent"),
+        "silent": ("silent", "quiet"),
+    }
+
+    def _resolve_option(self, entity_id: str, value: str) -> str:
+        """Match our level name against the select's real options
+        (case-insensitive, with known aliases like quiet<->silent)."""
+        st = self.hass.states.get(entity_id)
+        options = (st.attributes.get("options") if st else None) or []
+        for cand in self._ALIASES.get(value, (value,)):
+            for opt in options:
+                if str(opt).lower() == cand.lower():
+                    return opt
+        return value
+
+    def _derived_select(self, opt_key: str, suffix: str) -> str:
+        ent = self._opts.get(opt_key)
+        if ent:
+            return ent
+        return f"select.{self.vacuum_entity.split('.', 1)[1]}{suffix}"
+
+    async def _push_level(self, opt_key: str, suffix: str, value: str) -> None:
+        """Set a level on the robot right now (used for the active room)."""
+        ent = self._derived_select(opt_key, suffix)
+        try:
+            await self.hass.services.async_call(
+                "select", "select_option",
+                {"entity_id": ent, "option": self._resolve_option(ent, value)},
+                blocking=True,
+            )
+        except Exception as err:  # noqa: BLE001
+            _LOGGER.warning("Live level change via %s failed: %s", ent, err)
 
     # ------------------------------------------------------------------
     # public queue operations (services / buttons / card)
@@ -186,7 +226,20 @@ class QueueManager:
     async def async_set_params(self, item_id=None, position=None,
                                suction=None, water=None, repeats=None) -> None:
         item = self._find(item_id, position)
-        if item is None or item["status"] != STATUS_PENDING:
+        if item is None:
+            return
+        if item["status"] == STATUS_ACTIVE:
+            # live change while the room is being cleaned; "off" would need a
+            # cleaning-mode switch mid-job, so it is not allowed here
+            if suction and suction != "off":
+                item["suction"] = suction
+                await self._push_level(CONF_SUCTION_SELECT, "_suction_level", suction)
+            if water and water != "off":
+                item["water"] = water
+                await self._push_level(CONF_WATER_SELECT, "_mop_pad_humidity", water)
+            self._notify()
+            return
+        if item["status"] != STATUS_PENDING:
             return
         new_s = suction or item["suction"]
         new_w = water or item["water"]
@@ -315,16 +368,19 @@ class QueueManager:
                 _LOGGER.warning("Could not set cleaning mode via %s: %s", mode_select, err)
 
             if use_selects:
-                for select_key, value in (
-                    (CONF_SUCTION_SELECT, nxt["suction"]),
-                    (CONF_WATER_SELECT, nxt["water"]),
+                for select_key, suffix, value in (
+                    (CONF_SUCTION_SELECT, "_suction_level", nxt["suction"]),
+                    (CONF_WATER_SELECT, "_mop_pad_humidity", nxt["water"]),
                 ):
-                    ent = opts.get(select_key)
-                    if ent and value != "off":
-                        await self.hass.services.async_call(
-                            "select", "select_option",
-                            {"entity_id": ent, "option": value}, blocking=True,
-                        )
+                    if value == "off":
+                        continue
+                    ent = self._derived_select(select_key, suffix)
+                    await self.hass.services.async_call(
+                        "select", "select_option",
+                        {"entity_id": ent,
+                         "option": self._resolve_option(ent, value)},
+                        blocking=True,
+                    )
             else:
                 if not suction_off:
                     data["suction_level"] = nxt["suction"]
@@ -368,7 +424,8 @@ class QueueManager:
     def snapshot(self) -> dict[str, Any]:
         return {
             "state": "running" if self.running else "idle",
-            "items": list(self.queue),
+            "revision": self._revision,
+            "items": [{**i, "zone": list(i["zone"])} for i in self.queue],
             "rooms": sorted(self.rooms.keys()),
             "count_pending": sum(1 for i in self.queue if i["status"] == STATUS_PENDING),
             "vacuum_entity": self.vacuum_entity,

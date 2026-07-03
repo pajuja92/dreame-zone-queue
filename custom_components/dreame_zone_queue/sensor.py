@@ -54,6 +54,7 @@ class QueueSensor(SensorEntity):
     def extra_state_attributes(self) -> dict:
         snap = self._manager.snapshot
         return {
+            "revision": snap["revision"],
             "items": snap["items"],
             "rooms": snap["rooms"],
             "count_pending": snap["count_pending"],

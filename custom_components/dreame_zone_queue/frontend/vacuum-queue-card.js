@@ -60,12 +60,15 @@ class VacuumQueueCard extends HTMLElement {
           `<button class="ib up" data-id="${it.id}" title="Wyżej">\u25B2</button>` +
           `<button class="ib down" data-id="${it.id}" title="Niżej">\u25BC</button>` + del
         : del;
+      const editable = pending || active;
+      const suctionOpts = active ? SUCTION.filter((o) => o !== "off") : SUCTION;
+      const waterOpts = active ? WATER.filter((o) => o !== "off") : WATER;
       return `<tr class="${it.status}" data-id="${it.id}" ${pending ? 'draggable="true"' : ""}>
         <td class="num">${idx + 1}</td>
         <td class="st">${STATUS_ICON[it.status] || ""}</td>
         <td class="room">${it.room}</td>
-        <td>${pending ? sel(SUCTION, it.suction, "suction", it.id) : it.suction}</td>
-        <td>${pending ? sel(WATER, it.water, "water", it.id) : it.water}</td>
+        <td>${editable ? sel(suctionOpts, it.suction, "suction", it.id) : it.suction}</td>
+        <td>${editable ? sel(waterOpts, it.water, "water", it.id) : it.water}</td>
         <td class="rep">${pending ? sel(REPEATS, it.repeats, "repeats", it.id, "\u00D7") : it.repeats + "\u00D7"}</td>
         <td class="ctl">${ctl}</td>
       </tr>`;
