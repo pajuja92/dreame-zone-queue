@@ -36,7 +36,8 @@
           "y2": "Y2",
           "suction": "Domyślne ssanie",
           "water": "Domyślny poziom mopa",
-          "repeats": "Powtórzenia"
+          "repeats": "Powtórzenia",
+          "icon": "Ikona (emoji, opcjonalna)"
         }
       },
       "edit_room": {
@@ -55,7 +56,8 @@
           "y2": "Y2",
           "suction": "Domyślne ssanie",
           "water": "Domyślny poziom mopa",
-          "repeats": "Powtórzenia"
+          "repeats": "Powtórzenia",
+          "icon": "Ikona (emoji, opcjonalna)"
         }
       },
       "remove_room": {

@@ -41,6 +41,11 @@ class VacuumQueueCard extends HTMLElement {
     }
     const items = st.attributes.items || [];
     const rooms = st.attributes.rooms || [];
+    const roomIcons = st.attributes.room_icons || {};
+    const ric = (name, own) => {
+      const i = own || roomIcons[name] || "";
+      return i ? i + " " : "";
+    };
     const running = st.state === "running";
     const vac = st.attributes.vacuum_entity;
     const vacState = vac && this._hass.states[vac] ? this._hass.states[vac].state : "?";
@@ -66,7 +71,7 @@ class VacuumQueueCard extends HTMLElement {
       return `<tr class="${it.status}" data-id="${it.id}" ${pending ? 'draggable="true"' : ""}>
         <td class="num">${idx + 1}</td>
         <td class="st">${STATUS_ICON[it.status] || ""}</td>
-        <td class="room">${it.room}</td>
+        <td class="room">${ric(it.room, it.icon)}${it.room}</td>
         <td>${editable ? sel(suctionOpts, it.suction, "suction", it.id) : it.suction}</td>
         <td>${editable ? sel(waterOpts, it.water, "water", it.id) : it.water}</td>
         <td class="rep">${pending ? sel(REPEATS, it.repeats, "repeats", it.id, "\u00D7") : it.repeats + "\u00D7"}</td>
@@ -122,7 +127,7 @@ class VacuumQueueCard extends HTMLElement {
              </tr></thead><tbody>${rows}</tbody></table>`
           : `<div class="empty">Kolejka pusta — dodaj pokoje poniżej.</div>`}
         <div class="addrow">
-          <select id="addRoom">${rooms.map((r) => `<option>${r}</option>`).join("")}</select>
+          <select id="addRoom">${rooms.map((r) => `<option value="${r}">${ric(r)}${r}</option>`).join("")}</select>
           <button class="btn" id="add" ${rooms.length ? "" : "disabled"}>+ Dodaj</button>
         </div>
         <div class="actions">

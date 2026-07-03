@@ -180,6 +180,7 @@ class QueueManager:
             {
                 "id": self._next_id,
                 "room": room,
+                "icon": base.get("icon", ""),
                 "zone": base["zone"],
                 "suction": suction or base.get("suction", "standard"),
                 "water": water or base.get("water", "moist"),
@@ -326,7 +327,14 @@ class QueueManager:
         if nxt is None:
             self.running = False
             self._notify()
-            _LOGGER.info("Queue finished")
+            _LOGGER.info("Queue finished — sending the robot back to the dock")
+            try:
+                await self.hass.services.async_call(
+                    "vacuum", "return_to_base",
+                    {"entity_id": self.vacuum_entity}, blocking=False,
+                )
+            except Exception as err:  # noqa: BLE001
+                _LOGGER.warning("return_to_base after queue finish failed: %s", err)
             return
 
         nxt["status"] = STATUS_ACTIVE
@@ -427,6 +435,7 @@ class QueueManager:
             "revision": self._revision,
             "items": [{**i, "zone": list(i["zone"])} for i in self.queue],
             "rooms": sorted(self.rooms.keys()),
+            "room_icons": {n: r.get("icon", "") for n, r in self.rooms.items()},
             "count_pending": sum(1 for i in self.queue if i["status"] == STATUS_PENDING),
             "vacuum_entity": self.vacuum_entity,
         }

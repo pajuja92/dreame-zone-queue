@@ -49,6 +49,7 @@ def _room_schema(defaults: dict | None = None) -> vol.Schema:
     return vol.Schema(
         {
             vol.Required("name", default=d.get("name", "")): TextSelector(),
+            vol.Optional("icon", default=d.get("icon", "")): TextSelector(),
             vol.Required("x1", default=zone[0]): COORD,
             vol.Required("y1", default=zone[1]): COORD,
             vol.Required("x2", default=zone[2]): COORD,
@@ -69,6 +70,7 @@ def _room_schema(defaults: dict | None = None) -> vol.Schema:
 def _room_from_input(user_input: dict) -> tuple[str, dict]:
     name = user_input["name"].strip()
     return name, {
+        "icon": (user_input.get("icon") or "").strip(),
         "zone": [
             int(user_input["x1"]), int(user_input["y1"]),
             int(user_input["x2"]), int(user_input["y2"]),

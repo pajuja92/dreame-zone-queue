@@ -36,7 +36,8 @@
           "y2": "Y2",
           "suction": "Default suction",
           "water": "Default mop level",
-          "repeats": "Repeats"
+          "repeats": "Repeats",
+          "icon": "Icon (emoji, optional)"
         }
       },
       "edit_room": {
@@ -55,7 +56,8 @@
           "y2": "Y2",
           "suction": "Default suction",
           "water": "Default mop level",
-          "repeats": "Repeats"
+          "repeats": "Repeats",
+          "icon": "Icon (emoji, optional)"
         }
       },
       "remove_room": {

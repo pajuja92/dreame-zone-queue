@@ -14,9 +14,10 @@ EXAMPLE_YAML = """\
 #   suction: standard                  # quiet|standard|strong|turbo
 #   water: moist                       # slightly_dry|moist|wet
 #   repeats: 1
+#   icon: "\U0001F6CB"                       # opcjonalne emoji
 """
 
-DEFAULTS = {"suction": "standard", "water": "moist", "repeats": 1}
+DEFAULTS = {"suction": "standard", "water": "moist", "repeats": 1, "icon": ""}
 
 
 def rooms_to_yaml(rooms: dict[str, dict]) -> str:
@@ -59,7 +60,9 @@ def validate_rooms(data: Any) -> tuple[dict[str, dict], str | None]:
             return {}, f"'{name}': repeats must be an integer"
         if not 1 <= repeats <= 3:
             return {}, f"'{name}': repeats must be between 1 and 3"
+        icon = str(room.get("icon", "")).strip()
         out[name] = {
+            "icon": icon,
             "zone": [int(v) for v in zone],
             "suction": suction,
             "water": water,
