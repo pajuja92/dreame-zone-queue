@@ -1,0 +1,48 @@
+add:
+  name: Add room to queue
+  description: Adds a defined room to the cleaning queue.
+  fields:
+    room:
+      name: Room
+      description: Room name as defined in the integration options
+      required: true
+      example: Salon
+      selector: {text: {}}
+    suction:
+      name: Suction level
+      selector: {select: {options: [quiet, standard, strong, turbo]}}
+    water:
+      name: Mop / water level
+      selector: {select: {options: [low, medium, high]}}
+    repeats:
+      name: Repeats
+      selector: {number: {min: 1, max: 3, mode: box}}
+remove:
+  name: Remove item
+  description: Removes an item from the queue (by item_id or 1-based position).
+  fields:
+    item_id: {name: Item ID, selector: {number: {mode: box}}}
+    position: {name: Position, selector: {number: {min: 1, max: 50, mode: box}}}
+move:
+  name: Move item
+  description: Moves a pending item to a new 1-based position.
+  fields:
+    item_id: {name: Item ID, selector: {number: {mode: box}}}
+    position: {name: Position, selector: {number: {min: 1, max: 50, mode: box}}}
+    new_position:
+      name: New position
+      required: true
+      selector: {number: {min: 1, max: 50, mode: box}}
+set_params:
+  name: Set item parameters
+  description: Changes suction/water/repeats of a pending item.
+  fields:
+    item_id: {name: Item ID, selector: {number: {mode: box}}}
+    position: {name: Position, selector: {number: {min: 1, max: 50, mode: box}}}
+    suction: {name: Suction, selector: {select: {options: [quiet, standard, strong, turbo]}}}
+    water: {name: Water, selector: {select: {options: [low, medium, high]}}}
+    repeats: {name: Repeats, selector: {number: {min: 1, max: 3, mode: box}}}
+start: {name: Start queue, description: Starts processing the queue.}
+pause: {name: Pause queue, description: Finishes the current room, then stops.}
+skip: {name: Skip current room, description: Stops the robot and moves to the next room.}
+clear: {name: Clear queue, description: Clears the queue and sends the robot home.}

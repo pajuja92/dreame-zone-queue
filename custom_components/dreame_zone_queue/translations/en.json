@@ -1,0 +1,56 @@
+{
+  "config": {
+    "step": {
+      "user": {
+        "title": "Dreame Zone Queue",
+        "description": "Select your Dreame vacuum entity. Rooms are configured later in the integration options.",
+        "data": {"vacuum_entity": "Vacuum entity"}
+      }
+    },
+    "abort": {"single_instance_allowed": "Only one instance is allowed."}
+  },
+  "options": {
+    "step": {
+      "init": {
+        "title": "Dreame Zone Queue",
+        "menu_options": {
+          "add_room": "Add room",
+          "edit_room": "Edit room",
+          "remove_room": "Remove room",
+          "settings": "Settings"
+        }
+      },
+      "add_room": {
+        "title": "Add room",
+        "description": "Zone coordinates in map units (mm). Read them e.g. from Xiaomi Vacuum Map Card (zone cleanup mode).",
+        "data": {
+          "name": "Room name", "x1": "X1", "y1": "Y1", "x2": "X2", "y2": "Y2",
+          "suction": "Default suction", "water": "Default mop level", "repeats": "Repeats"
+        }
+      },
+      "edit_room": {"title": "Edit room", "data": {"room": "Room"}},
+      "edit_room_form": {
+        "title": "Edit room",
+        "data": {
+          "name": "Room name", "x1": "X1", "y1": "Y1", "x2": "X2", "y2": "Y2",
+          "suction": "Default suction", "water": "Default mop level", "repeats": "Repeats"
+        }
+      },
+      "remove_room": {"title": "Remove room", "data": {"room": "Room"}},
+      "settings": {
+        "title": "Settings",
+        "data": {
+          "vacuum_entity": "Vacuum entity",
+          "grace_seconds": "Grace period after dispatch (s)",
+          "delay_between_zones": "Delay between zones (s)",
+          "water_param": "Water parameter name in vacuum_clean_zone (empty = none)",
+          "use_selects": "Set levels via select entities instead of service parameters",
+          "suction_select_entity": "Suction select entity",
+          "water_select_entity": "Mop humidity select entity"
+        }
+      }
+    },
+    "error": {"name_required": "Name is required.", "name_exists": "A room with this name already exists."},
+    "abort": {"no_rooms": "No rooms defined yet."}
+  }
+}
