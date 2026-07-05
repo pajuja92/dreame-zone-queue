@@ -248,13 +248,11 @@ class QueueManager:
                 return
             if suction:
                 item["suction"] = suction
-                if suction != "off":
-                    await self._push_level(CONF_SUCTION_SELECT, "_suction_level", suction)
             if water:
                 item["water"] = water
-                if water != "off":
-                    await self._push_level(CONF_WATER_SELECT, "_mop_pad_humidity", water)
-            # switch cleaning mode if off state changed
+            # switch cleaning mode FIRST — robot ignores level changes
+            # for components not active in the current mode (e.g. setting
+            # suction while in mopping mode does nothing)
             if suction or water:
                 mode = (
                     "sweeping" if item["water"] == "off"
@@ -272,6 +270,11 @@ class QueueManager:
                     )
                 except Exception as err:  # noqa: BLE001
                     _LOGGER.warning("Live cleaning mode switch failed: %s", err)
+            # THEN push levels for components that are not off
+            if suction and suction != "off":
+                await self._push_level(CONF_SUCTION_SELECT, "_suction_level", suction)
+            if water and water != "off":
+                await self._push_level(CONF_WATER_SELECT, "_mop_pad_humidity", water)
             self._notify()
             return
         if item["status"] != STATUS_PENDING:
@@ -701,11 +704,14 @@ class QueueManager:
             self._notify()
             return
 
-        # Przejscie z aktywnego sprzatania w stan "przy bazie".
+        # Przejscie z aktywnego sprzatania w stan "przy bazie" LUB "paused".
+        # Normalnie robot przechodzi cleaning → returning (w finished_states),
+        # ale HA moze przeskoczyc event i dac cleaning → paused bezposrednio.
         was_cleaning = old.state == "cleaning" or self._to_bool(
             old.attributes.get("running")
         )
-        if was_cleaning and new.state in self.finished_states:
+        entered_service = new.state in self.finished_states or new.state == "paused"
+        if was_cleaning and entered_service:
             if self._task_interrupted(new):
                 if not item.get("interrupted"):
                     item["interrupted"] = True

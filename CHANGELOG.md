@@ -4,6 +4,17 @@ Wszystkie istotne zmiany w projekcie. Format oparty o
 [Keep a Changelog](https://keepachangelog.com/pl/1.1.0/),
 wersjonowanie zgodne z [SemVer](https://semver.org/lang/pl/).
 
+## [1.8.5] - 2026-07-05
+
+### Naprawione
+- **Przełączanie ssania z „wył." nie działało**: robot ignorował zmianę
+  poziomu ssania, bo kod ustawiał `suction_level` PRZED przełączeniem
+  `cleaning_mode`. Robot w trybie „mopping" ignoruje ssanie. Teraz
+  kolejność: najpierw `cleaning_mode`, potem poziomy.
+- **Zabezpieczenie `paused`**: detekcja przerwania pokoju działa teraz
+  także gdy HA przeskoczy event `returning` i da bezpośrednio
+  `cleaning → paused`.
+
 ## [1.8.4] - 2026-07-05
 
 ### Naprawione
