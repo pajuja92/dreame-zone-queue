@@ -600,19 +600,48 @@ class QueueManager:
             self._notify()
 
     @staticmethod
-    def _task_interrupted(new_state) -> bool:
-        """True, gdy robot wrocil do bazy z NIEUKONCZONYM zadaniem
-        (ladowanie przy niskiej baterii, mycie/suszenie mopa itp.)."""
+    def _to_bool(v) -> bool:
+        if isinstance(v, bool):
+            return v
+        return str(v).strip().lower() in ("true", "on", "1", "yes")
+
+    def _task_interrupted(self, new_state) -> bool:
+        """True, gdy robot przerwal pokoj i pojechal do bazy, ale zadanie
+        NIE jest ukonczone (ladowanie z wznowieniem, mycie/suszenie mopa,
+        recznie wstrzymane zadanie). Oparte na polach boolean integracji
+        dreame — patrz atrybuty encji vacuum.
+
+        Kluczowe: 'washing_available' / 'drying_available' to tylko
+        informacja o mozliwosciach stacji, a NIE 'robi to teraz' —
+        czytamy wylacznie flagi biezacego stanu.
+        """
         a = new_state.attributes
-        ts = str(a.get("task_status", "")).lower()
-        status = str(a.get("status", "")).lower()
-        if "paused" in ts or "suspended" in ts or "interrupted" in ts:
+        b = self._to_bool
+
+        # 1) faktycznie trwajace / wstrzymane czynnosci serwisowe
+        if b(a.get("washing")) or b(a.get("washing_paused")):
             return True
-        if "washing" in status or "returning_washing" in status:
+        if b(a.get("drying")):
             return True
-        if "washing" in ts:
+
+        # 2) zadanie wstrzymane (recznie lub w drodze do bazy)
+        if b(a.get("paused")) or b(a.get("returning_paused")):
             return True
+
+        # 3) powrot do bazy / ladowanie, ale z wlaczonym wznawianiem —
+        #    robot sam dokonczy pokoj, wiec czekamy
+        resume = b(a.get("resume_cleaning"))
+        if resume and b(a.get("charging")):
+            return True
+        if resume and b(a.get("returning")) and not b(a.get("running")):
+            return True
+
         return False
+
+    def _task_running(self, state) -> bool:
+        """Czy robot faktycznie sprzata (nie stoi, nie wstrzymany)."""
+        a = state.attributes
+        return self._to_bool(a.get("running")) and not self._to_bool(a.get("paused"))
 
     @callback
     def _on_vacuum_state(self, event: Event) -> None:
@@ -627,17 +656,34 @@ class QueueManager:
             return
         if time.monotonic() - self._dispatched_at < self.grace_s:
             return
-        if old.state == "cleaning" and new.state in self.finished_states:
+        # Robot znow sprzata po serwisowej przerwie -> zdejmij flage.
+        if item.get("interrupted") and self._task_running(new):
+            item["interrupted"] = False
+            _LOGGER.info("Room '%s': robot resumed cleaning", item["room"])
+            self._notify()
+            return
+
+        # Przejscie z aktywnego sprzatania w stan "przy bazie".
+        was_cleaning = old.state == "cleaning" or self._to_bool(
+            old.attributes.get("running")
+        )
+        if was_cleaning and new.state in self.finished_states:
             if self._task_interrupted(new):
-                item["interrupted"] = True
-                _LOGGER.info(
-                    "Room '%s': robot interrupted the task (%s / %s) — "
-                    "queue is waiting for it to resume",
-                    item["room"],
-                    new.attributes.get("task_status"),
-                    new.attributes.get("status"),
-                )
-                self._notify()
+                if not item.get("interrupted"):
+                    item["interrupted"] = True
+                    _LOGGER.info(
+                        "Room '%s': robot returned to base but the task is NOT "
+                        "finished (charging=%s washing=%s paused=%s "
+                        "returning_paused=%s resume_cleaning=%s) — waiting for "
+                        "it to resume",
+                        item["room"],
+                        new.attributes.get("charging"),
+                        new.attributes.get("washing"),
+                        new.attributes.get("paused"),
+                        new.attributes.get("returning_paused"),
+                        new.attributes.get("resume_cleaning"),
+                    )
+                    self._notify()
                 return
             item["status"] = STATUS_DONE
             started = item.get("started_at") or 0

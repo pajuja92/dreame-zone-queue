@@ -4,6 +4,19 @@ Wszystkie istotne zmiany w projekcie. Format oparty o
 [Keep a Changelog](https://keepachangelog.com/pl/1.1.0/),
 wersjonowanie zgodne z [SemVer](https://semver.org/lang/pl/).
 
+## [1.8.2] - 2026-07-04
+
+### Naprawione
+- **Przerywanie pokoju przy powrocie na ładowanie / mycie mopa — naprawione
+  właściwie.** Detekcja z 1.7.0 opierała się na atrybucie `task_status`,
+  którego L10 Prime nie udostępnia, więc nie działała. Teraz orkiestrator
+  czyta konkretne flagi boolean encji dreame (`washing`, `washing_paused`,
+  `drying`, `paused`, `returning_paused`, `charging` + `resume_cleaning`)
+  i odróżnia realny koniec pokoju od serwisowego powrotu do bazy. Dodano
+  nadzór wznowienia: po doładowaniu/umyciu mopa robot dokańcza pokój,
+  a kolejka rusza dalej dopiero po jego faktycznym ukończeniu. Flagi
+  „*_available" (możliwości stacji) nie są już mylone ze stanem bieżącym.
+
 ## [1.8.1] - 2026-07-04
 
 ### Dodane
