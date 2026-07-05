@@ -1,7 +1,7 @@
 {
   "domain": "dreame_zone_queue",
   "name": "Dreame Zone Queue",
-  "version": "1.7.0",
+  "version": "1.8.0",
   "documentation": "https://github.com/pajuja92/dreame-zone-queue",
   "issue_tracker": "https://github.com/pajuja92/dreame-zone-queue/issues",
   "codeowners": ["@pajuja92"],

@@ -155,8 +155,13 @@ stop:
   name: Stop queue
   description: Ends the session — stops the robot, sends it to the dock, keeps the list.
 set_all_params:
-  name: Set parameters for all pending items
+  name: Set parameters for pending items
+  description: Applies to all pending items, or only to item_ids when provided.
   fields:
+    item_ids:
+      name: Item IDs
+      description: Optional list of queue item ids to limit the change to
+      selector: {object: {}}
     suction: {name: Suction, selector: {select: {options: [off, quiet, standard, strong, turbo]}}}
     water: {name: Water, selector: {select: {options: [off, slightly_dry, moist, wet]}}}
     repeats: {name: Repeats, selector: {number: {min: 1, max: 3, mode: box}}}

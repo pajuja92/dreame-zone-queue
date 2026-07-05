@@ -402,10 +402,14 @@ class QueueManager:
         await self.async_import_rooms(found, mode)
         return len(found)
 
-    async def async_set_all(self, suction=None, water=None, repeats=None) -> None:
-        """Bulk-apply parameters to every pending item."""
+    async def async_set_all(self, suction=None, water=None, repeats=None,
+                            item_ids=None) -> None:
+        """Bulk-apply parameters to pending items (all, or only item_ids)."""
+        ids = {int(i) for i in item_ids} if item_ids else None
         for item in self.queue:
             if item["status"] != STATUS_PENDING:
+                continue
+            if ids is not None and item["id"] not in ids:
                 continue
             new_s = suction or item["suction"]
             new_w = water or item["water"]
@@ -679,13 +683,29 @@ class QueueManager:
             state = "paused"
         else:
             state = "idle"
+        avgs = [s["avg_s"] for s in self.stats.values() if s.get("avg_s")]
+        global_avg = sum(avgs) / len(avgs) if avgs else None
+
+        def _est(i: dict) -> int | None:
+            avg = self.stats.get(i["room"], {}).get("avg_s") or global_avg
+            if avg is None:
+                return None
+            planned = avg * i.get("repeats", 1)
+            if i["status"] == STATUS_PENDING:
+                return int(planned)
+            if i["status"] == STATUS_ACTIVE:
+                elapsed = time.time() - (i.get("started_at") or time.time())
+                return int(max(planned - elapsed, 0))
+            return None
+
         return {
             "state": state,
             "revision": self._revision,
             "progress": {"done": finished, "total": len(self.queue)},
             "eta_s": self._eta_seconds(),
             "presets": sorted(self.presets.keys()),
-            "items": [{**i, "zone": list(i["zone"])} for i in self.queue],
+            "items": [{**i, "zone": list(i["zone"]), "est_s": _est(i)}
+                      for i in self.queue],
             "rooms": sorted(self.rooms.keys()),
             "room_icons": {n: r.get("icon", "") for n, r in self.rooms.items()},
             "count_pending": sum(1 for i in self.queue if i["status"] == STATUS_PENDING),

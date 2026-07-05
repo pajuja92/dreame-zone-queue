@@ -168,6 +168,7 @@ def _register_services(hass: HomeAssistant) -> None:
             vol.Optional("suction"): vol.In(SUCTION_LEVELS),
             vol.Optional("water"): vol.In(WATER_LEVELS),
             vol.Optional("repeats"): vol.Coerce(int),
+            vol.Optional("item_ids"): [vol.Coerce(int)],
         }),
     )
 

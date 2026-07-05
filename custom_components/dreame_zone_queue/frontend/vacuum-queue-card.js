@@ -15,6 +15,9 @@ const T_SUCTION = { off: "wy\u0142.", quiet: "cichy", standard: "standard",
                     strong: "mocny", turbo: "turbo" };
 const T_WATER = { off: "wy\u0142.", slightly_dry: "lekko suchy",
                   moist: "wilgotny", wet: "mokry" };
+const estTxt = (it) =>
+  it && it.est_s != null ? `~${Math.max(1, Math.round(it.est_s / 60))} min` : "";
+
 const T_STATE = { docked: "w doku", charging: "\u0142adowanie", cleaning: "sprz\u0105ta",
                   returning: "wraca do bazy", paused: "pauza", idle: "bezczynny",
                   error: "b\u0142\u0105d", unavailable: "niedost\u0119pny", sleeping: "u\u015Bpiony" };
@@ -31,6 +34,7 @@ const DEFAULTS = {
   show_progress: true,
   show_presets: true,
   show_bulk_edit: true,
+  bulk_mode: "all",
   read_only: false,
   compact: false,
 };
@@ -106,6 +110,10 @@ class VacuumQueueCard extends HTMLElement {
     if (pt)
       pt.textContent = `${prog.done}/${prog.total} pokoi` +
         (etaS ? ` \u00B7 ~${Math.max(1, Math.round(etaS / 60))} min` : "");
+    root.querySelectorAll(".est").forEach((e) => {
+      const it = items.find((i) => i.id === Number(e.dataset.id));
+      e.textContent = estTxt(it);
+    });
     const vac = st.attributes.vacuum_entity;
     const vs = vac && this._hass.states[vac] ? this._hass.states[vac].state : "?";
     const sub = root.querySelector(".sub");
@@ -134,6 +142,10 @@ class VacuumQueueCard extends HTMLElement {
     };
     const running = st.state === "running";
     const ro = !!c.read_only;
+    if (!this._sel) this._sel = new Set();
+    this._sel = new Set([...this._sel].filter((id) =>
+      items.some((i) => i.id === id && i.status === "pending")));
+    const selMode = c.show_bulk_edit && !ro && c.bulk_mode === "selected";
     const presets = st.attributes.presets || [];
     const prog = st.attributes.progress || { done: 0, total: 0 };
     const etaS = st.attributes.eta_s;
@@ -167,7 +179,9 @@ class VacuumQueueCard extends HTMLElement {
         ${gripCell}
         <td class="num">${idx + 1}</td>
         <td class="st">${STATUS_ICON[it.status] || ""}</td>
-        <td class="room"><span class="rst">${STATUS_ICON[it.status] || ""} </span>${ric(it.room, it.icon)}${it.room}
+        <td class="room">${selMode && pending
+            ? `<input type="checkbox" class="pick" data-id="${it.id}" ${this._sel.has(it.id) ? "checked" : ""}>`
+            : ""}<span class="rst">${STATUS_ICON[it.status] || ""} </span>${ric(it.room, it.icon)}${it.room}<span class="est" data-id="${it.id}">${estTxt(it)}</span>
           ${active ? '<span class="now">sprząta teraz</span>' : ""}</td>
         <td class="sx"><span class="fl">Ssanie</span>${editable ? sel(suctionOpts, it.suction, "suction", it.id, T_SUCTION) : `<span class="val">${T_SUCTION[it.suction] || it.suction}</span>`}</td>
         <td class="wx"><span class="fl">Mop</span>${editable ? sel(waterOpts, it.water, "water", it.id, T_WATER) : `<span class="val">${T_WATER[it.water] || it.water}</span>`}</td>
@@ -243,6 +257,11 @@ class VacuumQueueCard extends HTMLElement {
         .ptxt { font-size: .8em; color: var(--secondary-text-color); white-space: nowrap; }
         .bulk { display: flex; gap: 8px; margin-top: 12px; flex-wrap: wrap; align-items: center; }
         .bulk .bl { font-size: .8em; color: var(--secondary-text-color); }
+        .pick { width: 18px; height: 18px; margin-right: 8px; vertical-align: -3px;
+                accent-color: var(--primary-color); cursor: pointer; }
+        .est { margin-left: 8px; font-size: .78em; font-weight: 400;
+               color: var(--secondary-text-color); white-space: nowrap; }
+        .est:empty { display: none; }
         .bulk select { flex: 1; min-width: 90px; padding: 6px 8px; border-radius: 8px;
                        background: var(--card-background-color); color: var(--primary-text-color);
                        border: 1px solid var(--divider-color); }
@@ -317,6 +336,8 @@ class VacuumQueueCard extends HTMLElement {
         :host(.narrow) .presets select, :host(.narrow) .presets .btn { height: 44px; border-radius: 12px; }
         :host(.narrow) .bulk select { height: 44px; border-radius: 10px; font-size: 16px; }
         :host(.narrow) .bulk .bl { font-size: 12px; flex-basis: 100%; }
+        :host(.narrow) .pick { width: 22px; height: 22px; }
+        :host(.narrow) .est { font-size: 12px; }
         :host(.narrow) tr.dragover td { border-top: none; }
         :host(.narrow) .addrow select, :host(.narrow) .addrow .btn { height: 44px; border-radius: 12px; }
         :host(.narrow) .actions { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
@@ -378,10 +399,10 @@ class VacuumQueueCard extends HTMLElement {
           <button class="btn" id="add" ${rooms.length ? "" : "disabled"}>+ Dodaj</button>
         </div>` : ""}
         ${c.show_bulk_edit && !ro && items.some((i) => i.status === "pending") ? `<div class="bulk">
-          <span class="bl">Wszystkie:</span>
-          <select id="bulkS"><option value="">ssanie\u2026</option>${SUCTION.map((o) => `<option value="${o}">${T_SUCTION[o] || o}</option>`).join("")}</select>
-          <select id="bulkW"><option value="">mop\u2026</option>${WATER.map((o) => `<option value="${o}">${T_WATER[o] || o}</option>`).join("")}</select>
-          <select id="bulkR"><option value="">powt.\u2026</option>${REPEATS.map((o) => `<option value="${o}">${o}\u00D7</option>`).join("")}</select>
+          <span class="bl" id="bulkLbl">${selMode ? `Wybrane (${this._sel.size}):` : "Wszystkie:"}</span>
+          <select id="bulkS" ${selMode && this._sel.size === 0 ? "disabled" : ""}><option value="">ssanie\u2026</option>${SUCTION.map((o) => `<option value="${o}">${T_SUCTION[o] || o}</option>`).join("")}</select>
+          <select id="bulkW" ${selMode && this._sel.size === 0 ? "disabled" : ""}><option value="">mop\u2026</option>${WATER.map((o) => `<option value="${o}">${T_WATER[o] || o}</option>`).join("")}</select>
+          <select id="bulkR" ${selMode && this._sel.size === 0 ? "disabled" : ""}><option value="">powt.\u2026</option>${REPEATS.map((o) => `<option value="${o}">${o}\u00D7</option>`).join("")}</select>
         </div>` : ""}
         ${c.show_presets && !ro ? `<div class="presets">
           <select id="presetSel" ${presets.length ? "" : "disabled"}>
@@ -433,6 +454,18 @@ class VacuumQueueCard extends HTMLElement {
     arm("stop", () => this._call("stop"));
     arm("clear", () => this._call("clear"));
     on("add", () => this._call("add", { room: root.getElementById("addRoom").value }));
+    root.querySelectorAll(".pick").forEach((cb) => {
+      cb.onchange = () => {
+        const id = Number(cb.dataset.id);
+        if (cb.checked) this._sel.add(id); else this._sel.delete(id);
+        const lbl = root.getElementById("bulkLbl");
+        if (lbl) lbl.textContent = `Wybrane (${this._sel.size}):`;
+        ["bulkS", "bulkW", "bulkR"].forEach((bid) => {
+          const el = root.getElementById(bid);
+          if (el) el.disabled = this._sel.size === 0;
+        });
+      };
+    });
     [["bulkS", "suction"], ["bulkW", "water"], ["bulkR", "repeats"]].forEach(([id, key]) => {
       const el = root.getElementById(id);
       if (!el) return;
@@ -440,6 +473,10 @@ class VacuumQueueCard extends HTMLElement {
         if (!el.value) return;
         const data = {};
         data[key] = key === "repeats" ? Number(el.value) : el.value;
+        if (selMode) {
+          if (this._sel.size === 0) { el.value = ""; return; }
+          data.item_ids = [...this._sel];
+        }
         this._call("set_all_params", data);
         el.value = "";
       };
@@ -607,6 +644,10 @@ const EDITOR_SCHEMA = [
       { name: "show_progress", selector: { boolean: {} } },
       { name: "show_presets", selector: { boolean: {} } },
       { name: "show_bulk_edit", selector: { boolean: {} } },
+      { name: "bulk_mode", selector: { select: { mode: "dropdown", options: [
+        { value: "all", label: "Wszystkie pozycje" },
+        { value: "selected", label: "Wybrane (checkboxy)" },
+      ] } } },
       { name: "read_only", selector: { boolean: {} } },
       { name: "compact", selector: { boolean: {} } },
     ],
@@ -625,6 +666,7 @@ const EDITOR_LABELS = {
   show_progress: "Pokaż pasek postępu i ETA",
   show_presets: "Pokaż presety",
   show_bulk_edit: "Pokaż masową zmianę parametrów",
+  bulk_mode: "Tryb masowej edycji",
   read_only: "Tylko podgląd (bez kontrolek)",
   compact: "Tryb kompaktowy",
 };
