@@ -145,7 +145,8 @@ class VacuumQueueCard extends HTMLElement {
     if (!this._sel) this._sel = new Set();
     this._sel = new Set([...this._sel].filter((id) =>
       items.some((i) => i.id === id && i.status === "pending")));
-    const selMode = c.show_bulk_edit && !ro && c.bulk_mode === "selected";
+    if (!this._bulkMode) this._bulkMode = c.bulk_mode || "all";
+    const selMode = c.show_bulk_edit && !ro && this._bulkMode === "selected";
     const presets = st.attributes.presets || [];
     const prog = st.attributes.progress || { done: 0, total: 0 };
     const etaS = st.attributes.eta_s;
@@ -257,6 +258,13 @@ class VacuumQueueCard extends HTMLElement {
         .ptxt { font-size: .8em; color: var(--secondary-text-color); white-space: nowrap; }
         .bulk { display: flex; gap: 8px; margin-top: 12px; flex-wrap: wrap; align-items: center; }
         .bulk .bl { font-size: .8em; color: var(--secondary-text-color); }
+        .seg { display: inline-flex; border: 1px solid var(--divider-color);
+               border-radius: 999px; overflow: hidden; }
+        .seg button { border: none; background: transparent; cursor: pointer;
+                      padding: 6px 12px; font: inherit; font-size: .82em;
+                      color: var(--secondary-text-color); }
+        .seg button.on { background: var(--primary-color);
+                         color: var(--text-primary-color, #fff); }
         .pick { width: 18px; height: 18px; margin-right: 8px; vertical-align: -3px;
                 accent-color: var(--primary-color); cursor: pointer; }
         .est { margin-left: 8px; font-size: .78em; font-weight: 400;
@@ -337,6 +345,8 @@ class VacuumQueueCard extends HTMLElement {
         :host(.narrow) .bulk select { height: 44px; border-radius: 10px; font-size: 16px; }
         :host(.narrow) .bulk .bl { font-size: 12px; flex-basis: 100%; }
         :host(.narrow) .pick { width: 22px; height: 22px; }
+        :host(.narrow) .seg { flex-basis: 100%; }
+        :host(.narrow) .seg button { flex: 1; padding: 10px 12px; font-size: 14px; }
         :host(.narrow) .est { font-size: 12px; }
         :host(.narrow) tr.dragover td { border-top: none; }
         :host(.narrow) .addrow select, :host(.narrow) .addrow .btn { height: 44px; border-radius: 12px; }
@@ -399,7 +409,10 @@ class VacuumQueueCard extends HTMLElement {
           <button class="btn" id="add" ${rooms.length ? "" : "disabled"}>+ Dodaj</button>
         </div>` : ""}
         ${c.show_bulk_edit && !ro && items.some((i) => i.status === "pending") ? `<div class="bulk">
-          <span class="bl" id="bulkLbl">${selMode ? `Wybrane (${this._sel.size}):` : "Wszystkie:"}</span>
+          <span class="seg">
+            <button id="bmAll" class="${selMode ? "" : "on"}">Wszystkie</button>
+            <button id="bmSel" class="${selMode ? "on" : ""}">${selMode ? `Wybrane (${this._sel.size})` : "Wybrane"}</button>
+          </span>
           <select id="bulkS" ${selMode && this._sel.size === 0 ? "disabled" : ""}><option value="">ssanie\u2026</option>${SUCTION.map((o) => `<option value="${o}">${T_SUCTION[o] || o}</option>`).join("")}</select>
           <select id="bulkW" ${selMode && this._sel.size === 0 ? "disabled" : ""}><option value="">mop\u2026</option>${WATER.map((o) => `<option value="${o}">${T_WATER[o] || o}</option>`).join("")}</select>
           <select id="bulkR" ${selMode && this._sel.size === 0 ? "disabled" : ""}><option value="">powt.\u2026</option>${REPEATS.map((o) => `<option value="${o}">${o}\u00D7</option>`).join("")}</select>
@@ -454,12 +467,21 @@ class VacuumQueueCard extends HTMLElement {
     arm("stop", () => this._call("stop"));
     arm("clear", () => this._call("clear"));
     on("add", () => this._call("add", { room: root.getElementById("addRoom").value }));
+    const setBulkMode = (m) => {
+      this._bulkMode = m;
+      if (m === "all") this._sel.clear();
+      this._fp = null;
+      this._structKey = null;
+      this.hass = this._hass;
+    };
+    on("bmAll", () => setBulkMode("all"));
+    on("bmSel", () => setBulkMode("selected"));
     root.querySelectorAll(".pick").forEach((cb) => {
       cb.onchange = () => {
         const id = Number(cb.dataset.id);
         if (cb.checked) this._sel.add(id); else this._sel.delete(id);
-        const lbl = root.getElementById("bulkLbl");
-        if (lbl) lbl.textContent = `Wybrane (${this._sel.size}):`;
+        const lbl = root.getElementById("bmSel");
+        if (lbl) lbl.textContent = `Wybrane (${this._sel.size})`;
         ["bulkS", "bulkW", "bulkR"].forEach((bid) => {
           const el = root.getElementById(bid);
           if (el) el.disabled = this._sel.size === 0;
@@ -644,10 +666,6 @@ const EDITOR_SCHEMA = [
       { name: "show_progress", selector: { boolean: {} } },
       { name: "show_presets", selector: { boolean: {} } },
       { name: "show_bulk_edit", selector: { boolean: {} } },
-      { name: "bulk_mode", selector: { select: { mode: "dropdown", options: [
-        { value: "all", label: "Wszystkie pozycje" },
-        { value: "selected", label: "Wybrane (checkboxy)" },
-      ] } } },
       { name: "read_only", selector: { boolean: {} } },
       { name: "compact", selector: { boolean: {} } },
     ],
@@ -666,7 +684,6 @@ const EDITOR_LABELS = {
   show_progress: "Pokaż pasek postępu i ETA",
   show_presets: "Pokaż presety",
   show_bulk_edit: "Pokaż masową zmianę parametrów",
-  bulk_mode: "Tryb masowej edycji",
   read_only: "Tylko podgląd (bez kontrolek)",
   compact: "Tryb kompaktowy",
 };

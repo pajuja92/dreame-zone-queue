@@ -4,14 +4,15 @@ Wszystkie istotne zmiany w projekcie. Format oparty o
 [Keep a Changelog](https://keepachangelog.com/pl/1.1.0/),
 wersjonowanie zgodne z [SemVer](https://semver.org/lang/pl/).
 
-## [1.8.0] - 2026-07-04
+## [1.8.1] - 2026-07-04
 
 ### Dodane
-- **Masowa edycja wybranych pozycji**: nowy tryb „Wybrane (checkboxy)"
-  (przełącznik w edytorze karty, obok „Wszystkie pozycje"). Pozycje
-  oczekujące dostają checkbox przy nazwie; wiersz masowej edycji pokazuje
-  licznik „Wybrane (n):", a selecty są nieaktywne, dopóki nic nie
-  zaznaczysz. Serwis `set_all_params` przyjmuje opcjonalne `item_ids`.
+- **Masowa edycja wybranych pozycji**: segmentowany przełącznik
+  „Wszystkie / Wybrane" bezpośrednio na karcie, w wierszu masowej edycji
+  nad sekcją przycisków. W trybie „Wybrane" pozycje oczekujące dostają
+  checkbox przy nazwie, przycisk trybu pokazuje licznik „Wybrane (n)",
+  a selecty są nieaktywne, dopóki nic nie zaznaczysz. Serwis
+  `set_all_params` przyjmuje opcjonalne `item_ids`.
 - **Estymacja czasu per pokój**: przy nazwie każdej pozycji dyskretne
   „~X min" wyliczane z historii sprzątań (średnia × powtórzenia);
   dla pokoju aktywnego pokazywany jest szacowany czas do końca,
