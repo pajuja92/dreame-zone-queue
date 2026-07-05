@@ -13,6 +13,7 @@ BUTTONS = (
     ("start", "Start queue", "mdi:play", "async_start"),
     ("pause", "Pause queue", "mdi:pause", "async_pause"),
     ("skip", "Skip current room", "mdi:skip-next", "async_skip"),
+    ("stop", "Stop queue", "mdi:stop", "async_stop"),
     ("clear", "Clear queue", "mdi:playlist-remove", "async_clear"),
 )
 

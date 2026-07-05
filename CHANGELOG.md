@@ -4,6 +4,30 @@ Wszystkie istotne zmiany w projekcie. Format oparty o
 [Keep a Changelog](https://keepachangelog.com/pl/1.1.0/),
 wersjonowanie zgodne z [SemVer](https://semver.org/lang/pl/).
 
+## [1.7.0] - 2026-07-04
+
+### Naprawione
+- **Kolejka nie psuje się przy powrotach serwisowych robota** (niska bateria,
+  mycie/suszenie mopa): orkiestrator czyta `task_status`/`status` z dreame
+  i odróżnia zadanie ukończone od wstrzymanego — przy przerwaniu czeka na
+  automatyczne wznowienie zamiast wysyłać następną strefę. Przerwane
+  przebiegi nie zaburzają statystyk czasu (ETA).
+- **Zmiana selecta nie przewija już karty do góry**: zmiany wartości są
+  nanoszone przyrostowo na istniejący DOM (pełna przebudowa tylko przy
+  zmianie struktury kolejki), więc fokus i pozycja scrolla zostają.
+
+### Dodane
+- **Stanowe przyciski sterujące**: PRACUJE → „Pauza / Pomiń / Stop",
+  WSTRZYMANA → „Kontynuuj / Pomiń / Stop", BEZCZYNNA → „Start / Wyczyść".
+  „Kontynuuj" wznawia też zapauzowanego robota (gdy stoi w stanie paused).
+  Nowy pomarańczowy badge WSTRZYMANA i stan `paused` sensora.
+- **Przycisk Stop z potwierdzeniem** (uzbrojenie dwuklikiem, jak ✕):
+  kończy sesję — zatrzymuje robota, odsyła do doku, listę zostawia.
+  Dostępny też jako serwis `stop` i encja przycisku.
+- **Masowa zmiana parametrów**: wiersz „Wszystkie:" z trzema selectami
+  ustawia ssanie / mop / powtórzenia dla wszystkich pozycji oczekujących
+  naraz (przełączalny w edytorze); serwis `set_all_params`.
+
 ## [1.6.0] - 2026-07-04
 
 ### Dodane

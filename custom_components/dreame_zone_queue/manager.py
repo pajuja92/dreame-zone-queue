@@ -266,13 +266,48 @@ class QueueManager:
         self._notify()
 
     async def async_start(self) -> None:
+        """Start a fresh queue OR resume a paused one."""
         if self.running:
+            return
+        active = self._active()
+        if active is not None:
+            # kontynuacja: aktywny pokoj wciaz "w grze" — czekamy na robota,
+            # a jesli robot stoi zapauzowany, dajemy mu kuksanca do wznowienia
+            self.running = True
+            self._notify()
+            vac = self.hass.states.get(self.vacuum_entity)
+            if vac is not None and vac.state == "paused":
+                try:
+                    await self.hass.services.async_call(
+                        "vacuum", "start",
+                        {"entity_id": self.vacuum_entity}, blocking=False,
+                    )
+                except Exception as err:  # noqa: BLE001
+                    _LOGGER.warning("Resume nudge failed: %s", err)
             return
         if not any(i["status"] == STATUS_PENDING for i in self.queue):
             _LOGGER.info("Queue start requested but no pending items")
             return
         self.running = True
         await self._dispatch_next()
+
+    async def async_stop(self) -> None:
+        """End the session: stop the robot, send it home, keep the list."""
+        self.running = False
+        active = self._active()
+        if active is not None:
+            active["status"] = STATUS_SKIPPED
+        self._notify()
+        try:
+            await self.hass.services.async_call(
+                "vacuum", "stop", {"entity_id": self.vacuum_entity}, blocking=True
+            )
+            await self.hass.services.async_call(
+                "vacuum", "return_to_base",
+                {"entity_id": self.vacuum_entity}, blocking=False,
+            )
+        except Exception as err:  # noqa: BLE001
+            _LOGGER.warning("Stop failed: %s", err)
 
     async def async_pause(self) -> None:
         self.running = False
@@ -366,6 +401,27 @@ class QueueManager:
             return 0
         await self.async_import_rooms(found, mode)
         return len(found)
+
+    async def async_set_all(self, suction=None, water=None, repeats=None) -> None:
+        """Bulk-apply parameters to every pending item."""
+        for item in self.queue:
+            if item["status"] != STATUS_PENDING:
+                continue
+            new_s = suction or item["suction"]
+            new_w = water or item["water"]
+            if new_s == "off" and new_w == "off":
+                _LOGGER.warning(
+                    "set_all: '%s' skipped — suction and mop cannot both be off",
+                    item["room"],
+                )
+                continue
+            if suction:
+                item["suction"] = suction
+            if water:
+                item["water"] = water
+            if repeats:
+                item["repeats"] = int(repeats)
+        self._notify()
 
     # ------------------------------------------------------------------
     # presets
@@ -539,6 +595,21 @@ class QueueManager:
             self.running = False
             self._notify()
 
+    @staticmethod
+    def _task_interrupted(new_state) -> bool:
+        """True, gdy robot wrocil do bazy z NIEUKONCZONYM zadaniem
+        (ladowanie przy niskiej baterii, mycie/suszenie mopa itp.)."""
+        a = new_state.attributes
+        ts = str(a.get("task_status", "")).lower()
+        status = str(a.get("status", "")).lower()
+        if "paused" in ts or "suspended" in ts or "interrupted" in ts:
+            return True
+        if "washing" in status or "returning_washing" in status:
+            return True
+        if "washing" in ts:
+            return True
+        return False
+
     @callback
     def _on_vacuum_state(self, event: Event) -> None:
         if not self.running:
@@ -553,10 +624,21 @@ class QueueManager:
         if time.monotonic() - self._dispatched_at < self.grace_s:
             return
         if old.state == "cleaning" and new.state in self.finished_states:
+            if self._task_interrupted(new):
+                item["interrupted"] = True
+                _LOGGER.info(
+                    "Room '%s': robot interrupted the task (%s / %s) — "
+                    "queue is waiting for it to resume",
+                    item["room"],
+                    new.attributes.get("task_status"),
+                    new.attributes.get("status"),
+                )
+                self._notify()
+                return
             item["status"] = STATUS_DONE
             started = item.get("started_at") or 0
             duration = time.time() - started if started else 0
-            if 30 < duration < 4 * 3600:
+            if 30 < duration < 4 * 3600 and not item.get("interrupted"):
                 per_pass = duration / max(1, item.get("repeats", 1))
                 s = self.stats.setdefault(item["room"], {"avg_s": per_pass, "n": 0})
                 n = min(s.get("n", 0), 9)
@@ -588,8 +670,17 @@ class QueueManager:
     def snapshot(self) -> dict[str, Any]:
         finished = sum(1 for i in self.queue
                        if i["status"] in ("done", "skipped"))
+        has_pending = any(i["status"] == STATUS_PENDING for i in self.queue)
+        started = any(i["status"] in (STATUS_ACTIVE, STATUS_DONE, STATUS_SKIPPED,
+                                      STATUS_ERROR) for i in self.queue)
+        if self.running:
+            state = "running"
+        elif has_pending and started:
+            state = "paused"
+        else:
+            state = "idle"
         return {
-            "state": "running" if self.running else "idle",
+            "state": state,
             "revision": self._revision,
             "progress": {"done": finished, "total": len(self.queue)},
             "eta_s": self._eta_seconds(),

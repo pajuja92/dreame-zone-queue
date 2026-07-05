@@ -30,6 +30,7 @@ const DEFAULTS = {
   grip_position: "buttons",
   show_progress: true,
   show_presets: true,
+  show_bulk_edit: true,
   read_only: false,
   compact: false,
 };
@@ -68,7 +69,47 @@ class VacuumQueueCard extends HTMLElement {
     const fp = st ? st.last_updated + JSON.stringify(st.attributes.items) + st.state : "missing";
     if (fp === this._fp) return;
     this._fp = fp;
+    const struct = st
+      ? (st.attributes.items || []).map((i) => `${i.id}:${i.status}`).join("|")
+        + "#" + st.state
+        + "#" + (st.attributes.rooms || []).join(",")
+        + "#" + (st.attributes.presets || []).join(",")
+      : "missing";
+    if (struct === this._structKey && this.shadowRoot) {
+      this._patch(st);
+      return;
+    }
+    this._structKey = struct;
     this._render(st);
+  }
+
+  _patch(st) {
+    // aktualizacja przyrostowa: bez przebudowy DOM => bez utraty fokusu
+    // i skoku scrolla po zmianie selecta
+    const root = this.shadowRoot;
+    const items = st.attributes.items || [];
+    const upd = (cls, key) => {
+      root.querySelectorAll("select." + cls).forEach((s) => {
+        const it = items.find((i) => i.id === Number(s.dataset.id));
+        if (it && String(s.value) !== String(it[key])) s.value = it[key];
+      });
+    };
+    upd("suction", "suction");
+    upd("water", "water");
+    upd("repeats", "repeats");
+    const prog = st.attributes.progress || { done: 0, total: 0 };
+    const etaS = st.attributes.eta_s;
+    const pf = root.querySelector(".pfill");
+    if (pf && prog.total > 0)
+      pf.style.width = Math.round(100 * prog.done / prog.total) + "%";
+    const pt = root.querySelector(".ptxt");
+    if (pt)
+      pt.textContent = `${prog.done}/${prog.total} pokoi` +
+        (etaS ? ` \u00B7 ~${Math.max(1, Math.round(etaS / 60))} min` : "");
+    const vac = st.attributes.vacuum_entity;
+    const vs = vac && this._hass.states[vac] ? this._hass.states[vac].state : "?";
+    const sub = root.querySelector(".sub");
+    if (sub) sub.textContent = "robot: " + (T_STATE[vs] || vs);
   }
 
   _call(service, data = {}) {
@@ -148,6 +189,7 @@ class VacuumQueueCard extends HTMLElement {
                  color: var(--secondary-text-color); }
         .badge.running { background: var(--primary-color);
                          color: var(--text-primary-color, #fff); }
+        .badge.paused { background: var(--warning-color, #ff9800); color: #fff; }
         .sub { color: var(--secondary-text-color); font-size: .84em; margin-bottom: 10px; }
 
         table { width: 100%; border-collapse: collapse; font-size: ${c.compact ? ".84em" : ".92em"}; }
@@ -199,6 +241,12 @@ class VacuumQueueCard extends HTMLElement {
         .pfill { height: 100%; border-radius: 999px;
                  background: var(--primary-color); transition: width .4s ease; }
         .ptxt { font-size: .8em; color: var(--secondary-text-color); white-space: nowrap; }
+        .bulk { display: flex; gap: 8px; margin-top: 12px; flex-wrap: wrap; align-items: center; }
+        .bulk .bl { font-size: .8em; color: var(--secondary-text-color); }
+        .bulk select { flex: 1; min-width: 90px; padding: 6px 8px; border-radius: 8px;
+                       background: var(--card-background-color); color: var(--primary-text-color);
+                       border: 1px solid var(--divider-color); }
+        .btn.warn.armed { background: var(--error-color, #d32f2f); color: #fff; }
         .presets { display: flex; gap: 8px; margin-top: 10px; flex-wrap: wrap; align-items: center; }
         .presets select { padding: 8px 10px; flex: 1; min-width: 130px; border-radius: 10px;
                           background: var(--card-background-color); color: var(--primary-text-color);
@@ -267,6 +315,8 @@ class VacuumQueueCard extends HTMLElement {
           min-width: 36px; height: 36px; border: 1px solid var(--divider-color);
           border-radius: 10px; touch-action: none; }
         :host(.narrow) .presets select, :host(.narrow) .presets .btn { height: 44px; border-radius: 12px; }
+        :host(.narrow) .bulk select { height: 44px; border-radius: 10px; font-size: 16px; }
+        :host(.narrow) .bulk .bl { font-size: 12px; flex-basis: 100%; }
         :host(.narrow) tr.dragover td { border-top: none; }
         :host(.narrow) .addrow select, :host(.narrow) .addrow .btn { height: 44px; border-radius: 12px; }
         :host(.narrow) .actions { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
@@ -311,7 +361,7 @@ class VacuumQueueCard extends HTMLElement {
       </style>
       <ha-card>
         ${c.show_header ? `<h2>${c.title}
-          <span class="badge ${running ? "running" : ""}">${running ? "PRACUJE" : "BEZCZYNNA"}</span>
+          <span class="badge ${st.state}">${{ running: "PRACUJE", paused: "WSTRZYMANA", idle: "BEZCZYNNA" }[st.state] || st.state}</span>
         </h2>` : ""}
         ${c.show_robot_state ? `<div class="sub">robot: ${T_STATE[vacState] || vacState}</div>` : ""}
         ${c.show_progress && prog.total > 0 ? `<div class="prog">
@@ -327,6 +377,12 @@ class VacuumQueueCard extends HTMLElement {
           <select id="addRoom">${rooms.map((r) => `<option value="${r}">${ric(r)}${r}</option>`).join("")}</select>
           <button class="btn" id="add" ${rooms.length ? "" : "disabled"}>+ Dodaj</button>
         </div>` : ""}
+        ${c.show_bulk_edit && !ro && items.some((i) => i.status === "pending") ? `<div class="bulk">
+          <span class="bl">Wszystkie:</span>
+          <select id="bulkS"><option value="">ssanie\u2026</option>${SUCTION.map((o) => `<option value="${o}">${T_SUCTION[o] || o}</option>`).join("")}</select>
+          <select id="bulkW"><option value="">mop\u2026</option>${WATER.map((o) => `<option value="${o}">${T_WATER[o] || o}</option>`).join("")}</select>
+          <select id="bulkR"><option value="">powt.\u2026</option>${REPEATS.map((o) => `<option value="${o}">${o}\u00D7</option>`).join("")}</select>
+        </div>` : ""}
         ${c.show_presets && !ro ? `<div class="presets">
           <select id="presetSel" ${presets.length ? "" : "disabled"}>
             ${presets.length
@@ -338,10 +394,16 @@ class VacuumQueueCard extends HTMLElement {
           <button class="btn warn" id="pDel" ${presets.length ? "" : "disabled"} title="Usu\u0144 preset">\uD83D\uDDD1</button>
         </div>` : ""}
         ${c.show_actions && !ro ? `<div class="actions">
-          <button class="btn primary" id="start">\u25B6 Start</button>
-          <button class="btn" id="pause">\u23F8 Pauza</button>
-          <button class="btn" id="skip">\u23ED Pomiń</button>
-          <button class="btn warn" id="clear">\u2715 Wyczyść</button>
+          ${st.state === "running"
+            ? `<button class="btn primary" id="pause" title="Robot dokończy bieżący pokój">\u23F8 Pauza</button>
+               <button class="btn" id="skip">\u23ED Pomiń</button>
+               <button class="btn warn twoclick" id="stop">\u23F9 Stop</button>`
+            : st.state === "paused"
+            ? `<button class="btn primary" id="start">\u25B6 Kontynuuj</button>
+               <button class="btn" id="skip">\u23ED Pomiń</button>
+               <button class="btn warn twoclick" id="stop">\u23F9 Stop</button>`
+            : `<button class="btn primary" id="start">\u25B6 Start</button>
+               <button class="btn warn twoclick" id="clear">\u2715 Wyczyść</button>`}
         </div>` : ""}
       </ha-card>`;
 
@@ -353,11 +415,35 @@ class VacuumQueueCard extends HTMLElement {
     const posOf = (id) => items.findIndex((i) => i.id === Number(id)) + 1;
     const on = (id, fn) => { const el = root.getElementById(id); if (el) el.onclick = fn; };
 
+    const arm = (id, fn) => {
+      const el = root.getElementById(id);
+      if (!el) return;
+      el.onclick = () => {
+        if (!el.classList.contains("armed")) {
+          el.classList.add("armed");
+          setTimeout(() => el.classList.remove("armed"), 3000);
+          return;
+        }
+        fn();
+      };
+    };
     on("start", () => this._call("start"));
     on("pause", () => this._call("pause"));
     on("skip", () => this._call("skip"));
-    on("clear", () => confirm("Wyczyścić całą kolejkę?") && this._call("clear"));
+    arm("stop", () => this._call("stop"));
+    arm("clear", () => this._call("clear"));
     on("add", () => this._call("add", { room: root.getElementById("addRoom").value }));
+    [["bulkS", "suction"], ["bulkW", "water"], ["bulkR", "repeats"]].forEach(([id, key]) => {
+      const el = root.getElementById(id);
+      if (!el) return;
+      el.onchange = () => {
+        if (!el.value) return;
+        const data = {};
+        data[key] = key === "repeats" ? Number(el.value) : el.value;
+        this._call("set_all_params", data);
+        el.value = "";
+      };
+    });
 
     root.querySelectorAll(".up").forEach((b) => {
       b.onclick = () => {
@@ -520,6 +606,7 @@ const EDITOR_SCHEMA = [
       ] } } },
       { name: "show_progress", selector: { boolean: {} } },
       { name: "show_presets", selector: { boolean: {} } },
+      { name: "show_bulk_edit", selector: { boolean: {} } },
       { name: "read_only", selector: { boolean: {} } },
       { name: "compact", selector: { boolean: {} } },
     ],
@@ -537,6 +624,7 @@ const EDITOR_LABELS = {
   grip_position: "Położenie uchwytu przeciągania (tryb wąski)",
   show_progress: "Pokaż pasek postępu i ETA",
   show_presets: "Pokaż presety",
+  show_bulk_edit: "Pokaż masową zmianę parametrów",
   read_only: "Tylko podgląd (bez kontrolek)",
   compact: "Tryb kompaktowy",
 };

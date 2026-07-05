@@ -161,6 +161,17 @@ def _register_services(hass: HomeAssistant) -> None:
     hass.services.async_register(DOMAIN, SERVICE_SKIP, wrap("async_skip"))
     hass.services.async_register(DOMAIN, SERVICE_CLEAR, wrap("async_clear"))
 
+    hass.services.async_register(DOMAIN, "stop", wrap("async_stop"))
+    hass.services.async_register(
+        DOMAIN, "set_all_params", wrap("async_set_all"),
+        vol.Schema({
+            vol.Optional("suction"): vol.In(SUCTION_LEVELS),
+            vol.Optional("water"): vol.In(WATER_LEVELS),
+            vol.Optional("repeats"): vol.Coerce(int),
+        }),
+    )
+
+
     async def import_rooms(call: ServiceCall) -> None:
         manager = _get_manager(hass)
         if manager is None:
