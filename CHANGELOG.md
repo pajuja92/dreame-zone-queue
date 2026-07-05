@@ -4,6 +4,17 @@ Wszystkie istotne zmiany w projekcie. Format oparty o
 [Keep a Changelog](https://keepachangelog.com/pl/1.1.0/),
 wersjonowanie zgodne z [SemVer](https://semver.org/lang/pl/).
 
+## [1.8.6] - 2026-07-06
+
+### Naprawione
+- **Kolejka nie kontynuowała po zakończeniu pokoju** (z `self_clean` = wł.):
+  robot po skończonym pokoju wracał myć mopa (`returning_to_wash`),
+  `_task_interrupted` widział to jako przerwanie mid-room i czekał na
+  wznowienie — ale robot nigdy nie wracał do tego pokoju, bo skończył go
+  prawidłowo. Teraz: gdy `interrupted` item widzi robota w `docked`/`idle`
+  bez flag serwisowych i bez sprzątania → pokój oznaczany jako DONE
+  i kolejka rusza dalej.
+
 ## [1.8.5] - 2026-07-05
 
 ### Naprawione

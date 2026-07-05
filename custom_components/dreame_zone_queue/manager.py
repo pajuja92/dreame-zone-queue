@@ -704,6 +704,24 @@ class QueueManager:
             self._notify()
             return
 
+        # Robot zakonczyl serwis (mycie/ladowanie) i jest idle/docked
+        # BEZ powrotu do cleaning — pokoj byl skonczony przed przerwa.
+        # Bez tego pokoje z self_clean=true tkwia w interrupted na zawsze,
+        # bo robot ZAWSZE jedzie myc mopa po kazdym pokoju.
+        if item.get("interrupted") and not self._task_interrupted(new) and not self._task_running(new):
+            if new.state in ("docked", "idle", "charging"):
+                item["interrupted"] = False
+                item["status"] = STATUS_DONE
+                started = item.get("started_at") or 0
+                duration = time.time() - started if started else 0
+                _LOGGER.info(
+                    "Room '%s' finished after service break (state: %s, duration: %.0fs)",
+                    item["room"], new.state, duration,
+                )
+                self._notify()
+                self._schedule_dispatch(self.delay_between_s)
+                return
+
         # Przejscie z aktywnego sprzatania w stan "przy bazie" LUB "paused".
         # Normalnie robot przechodzi cleaning → returning (w finished_states),
         # ale HA moze przeskoczyc event i dac cleaning → paused bezposrednio.
