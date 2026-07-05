@@ -239,14 +239,39 @@ class QueueManager:
         if item is None:
             return
         if item["status"] == STATUS_ACTIVE:
-            # live change while the room is being cleaned; "off" would need a
-            # cleaning-mode switch mid-job, so it is not allowed here
-            if suction and suction != "off":
+            # live change while the room is being cleaned
+            new_s = suction or item["suction"]
+            new_w = water or item["water"]
+            if new_s == "off" and new_w == "off":
+                _LOGGER.warning("Suction and mop cannot both be off — change rejected")
+                self._notify()
+                return
+            if suction:
                 item["suction"] = suction
-                await self._push_level(CONF_SUCTION_SELECT, "_suction_level", suction)
-            if water and water != "off":
+                if suction != "off":
+                    await self._push_level(CONF_SUCTION_SELECT, "_suction_level", suction)
+            if water:
                 item["water"] = water
-                await self._push_level(CONF_WATER_SELECT, "_mop_pad_humidity", water)
+                if water != "off":
+                    await self._push_level(CONF_WATER_SELECT, "_mop_pad_humidity", water)
+            # switch cleaning mode if off state changed
+            if suction or water:
+                mode = (
+                    "sweeping" if item["water"] == "off"
+                    else "mopping" if item["suction"] == "off"
+                    else "sweeping_and_mopping"
+                )
+                opts = self._opts
+                mode_select = opts.get(CONF_MODE_SELECT) or (
+                    f"select.{self.vacuum_entity.split('.', 1)[1]}_cleaning_mode"
+                )
+                try:
+                    await self.hass.services.async_call(
+                        "select", "select_option",
+                        {"entity_id": mode_select, "option": mode}, blocking=True,
+                    )
+                except Exception as err:  # noqa: BLE001
+                    _LOGGER.warning("Live cleaning mode switch failed: %s", err)
             self._notify()
             return
         if item["status"] != STATUS_PENDING:

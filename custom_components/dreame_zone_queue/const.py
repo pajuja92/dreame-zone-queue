@@ -1,7 +1,7 @@
 """Constants for Dreame Zone Queue."""
 
 DOMAIN = "dreame_zone_queue"
-VERSION = "1.8.2"
+VERSION = "1.8.3"
 
 URL_BASE = "/dreame_zone_queue_files"
 CARD_FILENAME = "vacuum-queue-card.js"

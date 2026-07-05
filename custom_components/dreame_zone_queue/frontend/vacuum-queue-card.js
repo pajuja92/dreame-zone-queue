@@ -173,8 +173,8 @@ class VacuumQueueCard extends HTMLElement {
         : del;
       const gripCell = `<td class="gripc">${pending && !ro && c.grip_position !== "buttons" ? gripBtn : ""}</td>`;
       const editable = !ro && (pending || active);
-      const suctionOpts = active ? SUCTION.filter((o) => o !== "off") : SUCTION;
-      const waterOpts = active ? WATER.filter((o) => o !== "off") : WATER;
+      const suctionOpts = SUCTION;
+      const waterOpts = WATER;
       const slim = ro || !c.show_arrows;
       return `<tr class="${it.status}${slim ? " slim" : ""}" data-id="${it.id}" ${pending && !ro ? 'draggable="true"' : ""}>
         ${gripCell}

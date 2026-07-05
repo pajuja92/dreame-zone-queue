@@ -4,6 +4,16 @@ Wszystkie istotne zmiany w projekcie. Format oparty o
 [Keep a Changelog](https://keepachangelog.com/pl/1.1.0/),
 wersjonowanie zgodne z [SemVer](https://semver.org/lang/pl/).
 
+## [1.8.3] - 2026-07-05
+
+### Naprawione
+- **Zmiana trybu sprzątania na żywo**: opcja „wył." na ssaniu i mopie
+  jest teraz dostępna także dla aktywnego (sprzątanego) pokoju. Zmiana
+  przełącza tryb robota mid-zone (`sweeping` / `mopping` /
+  `sweeping_and_mopping`) przez `select.select_option` — tak samo jak
+  robi to karta xiaomi-vacuum-map-card. Obie opcje „wył." jednocześnie
+  są nadal blokowane.
+
 ## [1.8.2] - 2026-07-04
 
 ### Naprawione
