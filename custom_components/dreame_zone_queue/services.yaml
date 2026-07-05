@@ -125,3 +125,29 @@ detect_rooms:
       name: Map camera entity
       description: Optional; by default derived from the vacuum entity (camera.<name>_map)
       selector: {entity: {domain: camera}}
+run:
+  name: Fill queue and start
+  description: >-
+    One-shot for automations: loads a preset and/or adds rooms, then starts
+    the queue. Replace mode keeps the room currently being cleaned.
+  fields:
+    preset:
+      name: Preset name
+      description: Preset to load first (optional)
+      example: Piątkowe sprzątanie
+      selector: {text: {}}
+    rooms:
+      name: Rooms
+      description: >-
+        Optional list. Each item is a room name or an object
+        {room, suction, water, repeats}.
+      example: '["Kitchen", {"room": "Łazienka", "suction": "strong", "repeats": 2}]'
+      selector: {object: {}}
+    mode:
+      name: Mode
+      default: replace
+      selector: {select: {options: [replace, append]}}
+    start:
+      name: Start after filling
+      default: true
+      selector: {boolean: {}}

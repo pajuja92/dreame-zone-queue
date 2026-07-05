@@ -1,0 +1,69 @@
+blueprint:
+  name: Dreame Zone Queue — sprzątanie wg harmonogramu
+  description: >-
+    O wybranej godzinie, w wybrane dni tygodnia, wczytuje preset kolejki
+    Dreame Zone Queue i startuje sprzątanie pokój po pokoju.
+  domain: automation
+  source_url: https://github.com/pajuja92/dreame-zone-queue/blob/main/blueprints/automation/dreame_zone_queue/scheduled_cleaning.yaml
+  input:
+    start_time:
+      name: Godzina startu
+      selector:
+        time: {}
+    weekdays:
+      name: Dni tygodnia
+      default: [fri]
+      selector:
+        select:
+          multiple: true
+          options:
+            - {value: mon, label: Poniedziałek}
+            - {value: tue, label: Wtorek}
+            - {value: wed, label: Środa}
+            - {value: thu, label: Czwartek}
+            - {value: fri, label: Piątek}
+            - {value: sat, label: Sobota}
+            - {value: sun, label: Niedziela}
+    preset_name:
+      name: Nazwa presetu
+      description: >-
+        Preset zapisany wcześniej na karcie kolejki (przycisk 💾) lub serwisem
+        save_preset — wpisz dokładnie tę samą nazwę.
+      selector:
+        text: {}
+    only_when_docked:
+      name: Startuj tylko, gdy robot jest w doku
+      default: true
+      selector:
+        boolean: {}
+    vacuum_entity:
+      name: Encja odkurzacza (dla warunku doku)
+      default: ""
+      selector:
+        entity:
+          domain: vacuum
+
+trigger:
+  - platform: time
+    at: !input start_time
+
+variables:
+  only_when_docked: !input only_when_docked
+  vacuum_entity: !input vacuum_entity
+
+condition:
+  - condition: time
+    weekday: !input weekdays
+  - condition: template
+    value_template: >-
+      {{ not only_when_docked or vacuum_entity == ''
+         or is_state(vacuum_entity, 'docked') }}
+
+action:
+  - service: dreame_zone_queue.run
+    data:
+      preset: !input preset_name
+      mode: replace
+      start: true
+
+mode: single

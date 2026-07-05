@@ -420,6 +420,27 @@ class QueueManager:
         if self.presets.pop(name, None) is not None:
             self._notify()
 
+
+    async def async_run(self, preset: str | None = None, rooms=None,
+                        mode: str = "replace", start: bool = True) -> None:
+        """One-shot for automations: fill the queue and (optionally) start it."""
+        if mode == "replace" and (preset or rooms):
+            self.queue = [i for i in self.queue if i["status"] == STATUS_ACTIVE]
+            self._notify()
+        if preset:
+            await self.async_load_preset(preset, mode="append")
+        for r in rooms or []:
+            if isinstance(r, str):
+                await self.async_add(r)
+            elif isinstance(r, dict) and r.get("room"):
+                await self.async_add(
+                    r["room"], r.get("suction"), r.get("water"), r.get("repeats")
+                )
+            else:
+                _LOGGER.warning("run: ignoring invalid rooms entry: %s", r)
+        if start:
+            await self.async_start()
+
     # ------------------------------------------------------------------
     # orchestration
     # ------------------------------------------------------------------

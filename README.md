@@ -1,4 +1,4 @@
-![Dreame Zone Queue](https://raw.githubusercontent.com/pajuja92/dreame-zone-queue/main/images/logo.png)
+<p align="center"><img src="images/logo.png" alt="Dreame Zone Queue" width="560"/></p>
 
 # Dreame Zone Queue
 
@@ -175,6 +175,162 @@ type: custom:vacuum-queue-card
 entity: sensor.vacuum_zone_queue
 ```
 
+
+
+## Automatyzacje (harmonogramy sprzątania)
+
+Do automatyzacji służy serwis **`dreame_zone_queue.run`** — jednym wywołaniem
+uzupełnia kolejkę (z presetu i/lub podanej listy pokoi) i od razu ją startuje.
+Tryb `replace` czyści kolejkę przed wczytaniem (zachowując pokój aktualnie
+sprzątany), `append` dokłada na koniec; `start: false` tylko przygotowuje
+kolejkę bez startu.
+
+**Najprościej: gotowy blueprint (bez pisania YAML).**
+*Ustawienia → Automatyzacje i sceny → Blueprinty → Importuj blueprint* i wklej:
+
+```
+https://github.com/pajuja92/dreame-zone-queue/blob/main/blueprints/automation/dreame_zone_queue/scheduled_cleaning.yaml
+```
+
+Po imporcie kliknij *Utwórz automatyzację* i wyklikaj: godzinę, dni tygodnia,
+nazwę presetu (zapisz go wcześniej przyciskiem 💾 na karcie) oraz opcjonalny
+warunek „startuj tylko, gdy robot w doku".
+
+**Przykład 1 — piątkowe sprzątanie z presetu (czysty YAML):**
+
+```yaml
+alias: Piątkowe sprzątanie
+triggers:
+  - trigger: time
+    at: "10:00:00"
+conditions:
+  - condition: time
+    weekday: [fri]
+actions:
+  - action: dreame_zone_queue.run
+    data:
+      preset: Piątkowe sprzątanie
+mode: single
+```
+
+**Przykład 2 — ręczna lista pokoi z parametrami, gdy wszyscy wyjdą z domu:**
+
+```yaml
+alias: Sprzątanie po wyjściu
+triggers:
+  - trigger: numeric_state
+    entity_id: zone.home
+    below: 1
+actions:
+  - action: dreame_zone_queue.run
+    data:
+      mode: replace
+      rooms:
+        - Corridor
+        - {room: Kitchen, suction: strong, water: wet, repeats: 2}
+        - {room: Łazienka, suction: strong, water: wet}
+mode: single
+```
+
+Elementy listy `rooms` to nazwa pokoju (użyje domyślnych parametrów pokoju)
+albo obiekt `{room, suction, water, repeats}`. Przydatne dopełnienia:
+`dreame_zone_queue.pause` (dokończ bieżący pokój i stój — np. gdy ktoś wróci
+do domu) oraz `dreame_zone_queue.clear` (przerwij i odeślij robota do doku).
+Encja `sensor.vacuum_zone_queue` nadaje się na wyzwalacze — np. powiadomienie,
+gdy stan zmieni się z `running` na `idle` (kolejka skończona).
+
+
+## Przepis: sprzątanie, gdy nikogo nie ma w domu
+
+Kompletny, sprawdzony scenariusz „wychodzimy — robot sprząta, wracamy — robot
+przestaje". Składa się z presetu i dwóch automatyzacji.
+
+**Krok 0 — zapisz preset.** Ułóż na karcie kolejkę pokoi do sprzątania pod
+Waszą nieobecność, kliknij 💾 i nazwij ją np. `Poza domem`.
+
+**Automatyzacja 1 — start po wyjściu ostatniego domownika.** Wyzwalacze to
+opuszczenie strefy domowej przez trackery domowników; warunki pilnują, że
+faktycznie nikogo nie ma (druga osoba poza domem *lub* jej telefon
+niedostępny). Podmień `device_id`/`entity_id` na swoje (najprościej: wyklikaj
+wyzwalacze i warunki w edytorze wizualnym, a akcję wklej w trybie YAML):
+
+```yaml
+alias: Sprzątanie, gdy nikogo nie ma
+triggers:
+  - trigger: device
+    domain: device_tracker
+    device_id: TWOJ_TELEFON_1
+    entity_id: TRACKER_1
+    type: leaves
+    zone: zone.home
+  - trigger: device
+    domain: device_tracker
+    device_id: TWOJ_TELEFON_2
+    entity_id: TRACKER_2
+    type: leaves
+    zone: zone.home
+conditions:
+  - condition: device
+    domain: device_tracker
+    device_id: TWOJ_TELEFON_1
+    entity_id: TRACKER_1
+    type: is_not_home
+  - condition: device
+    domain: device_tracker
+    device_id: TWOJ_TELEFON_2
+    entity_id: TRACKER_2
+    type: is_not_home
+  - condition: state          # nie mieszaj w kolejce, która już biegnie
+    entity_id: sensor.vacuum_zone_queue
+    state: idle
+actions:
+  - action: dreame_zone_queue.run
+    data:
+      preset: Poza domem
+      mode: replace
+      start: true
+mode: single
+```
+
+Zamiast dwóch warunków per osoba możesz użyć jednego zbiorczego:
+`numeric_state` na `zone.home` z `below: 1` (licznik osób w strefie).
+Warunek na `sensor.vacuum_zone_queue = idle` zapobiega podmianie kolejki,
+gdyby automatyzacja odpaliła się ponownie w trakcie sprzątania (np. przy
+wyjściach w odstępie czasu).
+
+**Automatyzacja 2 — pauza po powrocie.** Robot dokończy pokój, w którym
+właśnie jest, i nie ruszy następnego:
+
+```yaml
+alias: Pauza sprzątania po powrocie
+triggers:
+  - trigger: zone
+    entity_id: person.ty
+    zone: zone.home
+    event: enter
+  - trigger: zone
+    entity_id: person.domownik_2
+    zone: zone.home
+    event: enter
+conditions:
+  - condition: state
+    entity_id: sensor.vacuum_zone_queue
+    state: running
+actions:
+  - action: dreame_zone_queue.pause
+mode: single
+```
+
+Wariant ostrzejszy: zamiast `pause` użyj `dreame_zone_queue.clear` — przerwie
+także bieżący pokój i odeśle robota do doku. Wariant łagodniejszy: po pauzie
+kolejka pamięta pozostałe pokoje, więc przy kolejnym wyjściu automatyzacja 1
+(z trybem `replace`) zacznie od świeżego zestawu — a jeśli wolisz dokańczać
+zaległości, zmień w niej `mode: replace` na warunkowe ręczne wznowienie
+przyciskiem Start na karcie.
+
+Kolejka pozostaje w pełni edytowalna w trakcie działania automatyzacji —
+możesz z telefonu przestawiać, dokładać i usuwać pokoje oczekujące, robot
+uwzględni zmiany po ukończeniu bieżącego pomieszczenia.
 
 ## Masowa definicja pokoi (YAML)
 

@@ -239,6 +239,28 @@ def _register_services(hass: HomeAssistant) -> None:
         supports_response=SupportsResponse.OPTIONAL,
     )
 
+    async def run(call: ServiceCall) -> None:
+        manager = _get_manager(hass)
+        if manager is None:
+            raise ServiceValidationError("No configured Dreame Zone Queue instance")
+        await manager.async_run(
+            preset=call.data.get("preset"),
+            rooms=call.data.get("rooms"),
+            mode=call.data.get("mode", "replace"),
+            start=call.data.get("start", True),
+        )
+
+    hass.services.async_register(
+        DOMAIN, "run", run,
+        vol.Schema({
+            vol.Optional("preset"): cv.string,
+            vol.Optional("rooms"): list,
+            vol.Optional("mode", default="replace"): vol.In(["replace", "append"]),
+            vol.Optional("start", default=True): cv.boolean,
+        }),
+    )
+
+
     hass.services.async_register(
         DOMAIN, "import_rooms_from_dreame",
         partial(preset_call, method="async_import_from_dreame"),

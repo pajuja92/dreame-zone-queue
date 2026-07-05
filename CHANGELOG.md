@@ -4,6 +4,21 @@ Wszystkie istotne zmiany w projekcie. Format oparty o
 [Keep a Changelog](https://keepachangelog.com/pl/1.1.0/),
 wersjonowanie zgodne z [SemVer](https://semver.org/lang/pl/).
 
+## [1.6.0] - 2026-07-04
+
+### Dodane
+- Rozdział README „Przepis: sprzątanie, gdy nikogo nie ma w domu" —
+  kompletny scenariusz obecnościowy: preset + automatyzacja startu po
+  wyjściu ostatniego domownika + pauza po powrocie.
+- **Serwis `run` dla automatyzacji** — jednym wywołaniem wczytuje preset
+  i/lub listę pokoi (nazwy albo obiekty z parametrami) i startuje kolejkę;
+  tryby replace/append, opcja `start: false`.
+- **Blueprint „Sprzątanie wg harmonogramu"** (`blueprints/automation/...`) —
+  automatyzacja do wyklikania: godzina, dni tygodnia, nazwa presetu,
+  opcjonalny warunek startu tylko z doku.
+- Rozdział „Automatyzacje" w README z importem blueprintu i przykładami
+  (harmonogram z presetu, sprzątanie po wyjściu z domu).
+
 ## [1.5.3] - 2026-07-04
 
 ### Naprawione
