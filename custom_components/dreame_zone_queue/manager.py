@@ -643,6 +643,17 @@ class QueueManager:
         a = new_state.attributes
         b = self._to_bool
 
+        # 0) vacuum_state mowi wprost co robot robi — najsilniejszy sygnal
+        vs = str(a.get("vacuum_state", "")).lower()
+        if vs in (
+            "returning_to_wash", "returning_to_charge",
+            "washing", "washing_paused", "drying",
+            "charging", "charging_paused",
+        ):
+            return True
+        if "returning" in vs and ("wash" in vs or "charge" in vs):
+            return True
+
         # 1) faktycznie trwajace / wstrzymane czynnosci serwisowe
         if b(a.get("washing")) or b(a.get("washing_paused")):
             return True
@@ -658,7 +669,9 @@ class QueueManager:
         resume = b(a.get("resume_cleaning"))
         if resume and b(a.get("charging")):
             return True
-        if resume and b(a.get("returning")) and not b(a.get("running")):
+        # L10 Prime reports returning=true AND running=true simultaneously
+        # when going back to wash — don't require not-running
+        if resume and b(a.get("returning")):
             return True
 
         return False
@@ -698,10 +711,11 @@ class QueueManager:
                     item["interrupted"] = True
                     _LOGGER.info(
                         "Room '%s': robot returned to base but the task is NOT "
-                        "finished (charging=%s washing=%s paused=%s "
-                        "returning_paused=%s resume_cleaning=%s) — waiting for "
-                        "it to resume",
+                        "finished (vacuum_state=%s charging=%s washing=%s "
+                        "paused=%s returning_paused=%s resume_cleaning=%s) "
+                        "— waiting for it to resume",
                         item["room"],
+                        new.attributes.get("vacuum_state"),
                         new.attributes.get("charging"),
                         new.attributes.get("washing"),
                         new.attributes.get("paused"),

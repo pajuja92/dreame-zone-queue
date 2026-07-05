@@ -4,6 +4,17 @@ Wszystkie istotne zmiany w projekcie. Format oparty o
 [Keep a Changelog](https://keepachangelog.com/pl/1.1.0/),
 wersjonowanie zgodne z [SemVer](https://semver.org/lang/pl/).
 
+## [1.8.4] - 2026-07-05
+
+### Naprawione
+- **Powrót na mycie mopa nadal przerywał pokój**: `vacuum_state` L10 Prime
+  ustawia się na `returning_to_wash` ZANIM flaga `washing` stanie się `true`
+  — a `running` i `returning` są jednocześnie `true`, co omijało dotychczasowy
+  warunek. Teraz `_task_interrupted` sprawdza `vacuum_state` jako pierwszy
+  sygnał (szuka `returning_to_wash`, `returning_to_charge`, `washing`,
+  `drying`, `charging` itp.). Usunięto też wymóg `not running` przy
+  `returning + resume_cleaning`.
+
 ## [1.8.3] - 2026-07-05
 
 ### Naprawione
