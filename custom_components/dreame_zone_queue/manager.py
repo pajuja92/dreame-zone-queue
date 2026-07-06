@@ -686,14 +686,43 @@ class QueueManager:
 
     @callback
     def _on_vacuum_state(self, event: Event) -> None:
-        if not self.running:
-            return
-        item = self._active()
-        if item is None:
-            return
         old = event.data.get("old_state")
         new = event.data.get("new_state")
         if old is None or new is None:
+            return
+
+        # ── diagnostic dump — fires on EVERY state change ────────────
+        na = new.attributes
+        item = self._active()
+        _LOGGER.warning(
+            "DZQ_DIAG | room=%s | %s→%s | vacuum_state=%s | "
+            "zone_cleaning=%s started=%s running=%s paused=%s "
+            "returning=%s returning_paused=%s charging=%s "
+            "washing=%s washing_paused=%s drying=%s "
+            "resume_cleaning=%s | "
+            "cleaned_area=%s cleaning_time=%s current_segment=%s | "
+            "queue_running=%s interrupted=%s active_item=%s",
+            item.get("room") if item else "—",
+            old.state, new.state,
+            na.get("vacuum_state"),
+            na.get("zone_cleaning"), na.get("started"),
+            na.get("running"), na.get("paused"),
+            na.get("returning"), na.get("returning_paused"),
+            na.get("charging"),
+            na.get("washing"), na.get("washing_paused"),
+            na.get("drying"),
+            na.get("resume_cleaning"),
+            na.get("cleaned_area"), na.get("cleaning_time"),
+            na.get("current_segment"),
+            self.running,
+            item.get("interrupted") if item else "—",
+            item.get("room") if item else None,
+        )
+        # ── /diagnostic dump ─────────────────────────────────────────
+
+        if not self.running:
+            return
+        if item is None:
             return
         if time.monotonic() - self._dispatched_at < self.grace_s:
             return
