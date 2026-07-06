@@ -4,6 +4,21 @@ Wszystkie istotne zmiany w projekcie. Format oparty o
 [Keep a Changelog](https://keepachangelog.com/pl/1.1.0/),
 wersjonowanie zgodne z [SemVer](https://semver.org/lang/pl/).
 
+## [1.9.0] - 2026-07-06
+
+### Naprawione
+- **Kolejka nie przechodziła do następnego pokoju**: po skończeniu pokoju
+  robot wracał myć mopa (`self_clean`), ale `_task_interrupted` widział
+  `charging`/`washing` i uznawał to za przerwanie mid-room. Teraz
+  `zone_cleaning=False` + `started=False` to nadrzędny sygnał: **pokój
+  skończony** — mycie/ładowanie traktowane jako serwis post-clean, kolejka
+  przechodzi do następnego elementu.
+
+### Dodane
+- **Pełna diagnostyka** (`DZQ_DIAG`, `DZQ_ACTION`, `DZQ_DECISION`):
+  logowanie stanów, akcji użytkownika i decyzji managera na poziomie
+  `warning` — widoczne w UI logów HA.
+
 ## [1.8.6] - 2026-07-06
 
 ### Naprawione

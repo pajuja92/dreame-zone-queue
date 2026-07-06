@@ -656,6 +656,12 @@ class QueueManager:
         a = new_state.attributes
         b = self._to_bool
 
+        # Nadrzedny sygnal: jesli robot nie ma juz zadania strefowego,
+        # pokoj jest SKONCZONY.  Mycie/ladowanie po skonczonym pokoju
+        # to serwis post-clean, nie przerwanie mid-room.
+        if not b(a.get("zone_cleaning")) and not b(a.get("started")):
+            return False
+
         # 0) vacuum_state mowi wprost co robot robi — najsilniejszy sygnal
         vs = str(a.get("vacuum_state", "")).lower()
         if vs in (
