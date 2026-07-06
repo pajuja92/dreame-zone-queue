@@ -181,6 +181,7 @@ class QueueManager:
     # public queue operations (services / buttons / card)
     # ------------------------------------------------------------------
     async def async_add(self, room: str, suction=None, water=None, repeats=None) -> None:
+        _LOGGER.warning("DZQ_ACTION | ADD | room=%s suction=%s water=%s repeats=%s", room, suction, water, repeats)
         base = self.rooms.get(room)
         if base is None:
             _LOGGER.error("Unknown room '%s' — define it in the integration options", room)
@@ -201,6 +202,7 @@ class QueueManager:
         self._notify()
 
     async def async_remove(self, item_id=None, position=None) -> None:
+        _LOGGER.warning("DZQ_ACTION | REMOVE | item_id=%s position=%s", item_id, position)
         item = self._find(item_id, position)
         if item is None:
             return
@@ -222,6 +224,7 @@ class QueueManager:
         self._notify()
 
     async def async_move(self, item_id=None, position=None, new_position=None) -> None:
+        _LOGGER.warning("DZQ_ACTION | MOVE | item_id=%s position=%s new_position=%s", item_id, position, new_position)
         item = self._find(item_id, position)
         if item is None or item["status"] != STATUS_PENDING or new_position is None:
             return
@@ -235,6 +238,7 @@ class QueueManager:
 
     async def async_set_params(self, item_id=None, position=None,
                                suction=None, water=None, repeats=None) -> None:
+        _LOGGER.warning("DZQ_ACTION | SET_PARAMS | item_id=%s position=%s suction=%s water=%s repeats=%s", item_id, position, suction, water, repeats)
         item = self._find(item_id, position)
         if item is None:
             return
@@ -295,6 +299,7 @@ class QueueManager:
 
     async def async_start(self) -> None:
         """Start a fresh queue OR resume a paused one."""
+        _LOGGER.warning("DZQ_ACTION | START | running=%s queue_len=%s pending=%s", self.running, len(self.queue), sum(1 for i in self.queue if i['status'] == STATUS_PENDING))
         if self.running:
             return
         active = self._active()
@@ -321,6 +326,7 @@ class QueueManager:
 
     async def async_stop(self) -> None:
         """End the session: stop the robot, send it home, keep the list."""
+        _LOGGER.warning("DZQ_ACTION | STOP")
         self.running = False
         active = self._active()
         if active is not None:
@@ -338,11 +344,13 @@ class QueueManager:
             _LOGGER.warning("Stop failed: %s", err)
 
     async def async_pause(self) -> None:
+        _LOGGER.warning("DZQ_ACTION | PAUSE")
         self.running = False
         self._notify()
 
     async def async_skip(self) -> None:
         item = self._active()
+        _LOGGER.warning("DZQ_ACTION | SKIP | active_room=%s", item.get('room') if item else None)
         if item is None:
             return
         item["status"] = STATUS_SKIPPED
@@ -357,6 +365,7 @@ class QueueManager:
             self._schedule_dispatch(4)
 
     async def async_clear(self) -> None:
+        _LOGGER.warning("DZQ_ACTION | CLEAR | running=%s queue_len=%s", self.running, len(self.queue))
         was_running = self.running
         self.running = False
         self.queue.clear()
@@ -544,6 +553,7 @@ class QueueManager:
 
     async def _dispatch_next(self) -> None:
         nxt = next((i for i in self.queue if i["status"] == STATUS_PENDING), None)
+        _LOGGER.warning("DZQ_ACTION | DISPATCH_NEXT | next_room=%s pending=%s", nxt.get("room") if nxt else None, sum(1 for i in self.queue if i["status"] == STATUS_PENDING))
         if nxt is None:
             self.running = False
             self._notify()
@@ -729,7 +739,7 @@ class QueueManager:
         # Robot znow sprzata po serwisowej przerwie -> zdejmij flage.
         if item.get("interrupted") and self._task_running(new):
             item["interrupted"] = False
-            _LOGGER.info("Room '%s': robot resumed cleaning", item["room"])
+            _LOGGER.warning("DZQ_DECISION | RESUMED | room=%s — robot resumed cleaning, clearing interrupted", item["room"])
             self._notify()
             return
 
@@ -743,8 +753,8 @@ class QueueManager:
                 item["status"] = STATUS_DONE
                 started = item.get("started_at") or 0
                 duration = time.time() - started if started else 0
-                _LOGGER.info(
-                    "Room '%s' finished after service break (state: %s, duration: %.0fs)",
+                _LOGGER.warning(
+                    "DZQ_DECISION | DONE_AFTER_SERVICE | room=%s state=%s duration=%.0fs",
                     item["room"], new.state, duration,
                 )
                 self._notify()
@@ -762,11 +772,10 @@ class QueueManager:
             if self._task_interrupted(new):
                 if not item.get("interrupted"):
                     item["interrupted"] = True
-                    _LOGGER.info(
-                        "Room '%s': robot returned to base but the task is NOT "
-                        "finished (vacuum_state=%s charging=%s washing=%s "
-                        "paused=%s returning_paused=%s resume_cleaning=%s) "
-                        "— waiting for it to resume",
+                    _LOGGER.warning(
+                        "DZQ_DECISION | INTERRUPTED | room=%s | vacuum_state=%s "
+                        "charging=%s washing=%s paused=%s returning_paused=%s "
+                        "resume_cleaning=%s",
                         item["room"],
                         new.attributes.get("vacuum_state"),
                         new.attributes.get("charging"),
@@ -786,7 +795,7 @@ class QueueManager:
                 n = min(s.get("n", 0), 9)
                 s["avg_s"] = (s["avg_s"] * n + per_pass) / (n + 1)
                 s["n"] = n + 1
-            _LOGGER.info("Room '%s' finished (state: %s)", item["room"], new.state)
+            _LOGGER.warning("DZQ_DECISION | DONE | room=%s state=%s duration=%.0fs", item["room"], new.state, duration)
             self._notify()
             self._schedule_dispatch(self.delay_between_s)
 
