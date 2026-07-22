@@ -5,7 +5,7 @@ from typing import Any
 
 import yaml
 
-from .const import SUCTION_LEVELS, WATER_LEVELS
+from .const import MIN_ZONE_MM, SUCTION_LEVELS, WATER_LEVELS
 
 EXAMPLE_YAML = """\
 # Przyklad / example:
@@ -48,6 +48,13 @@ def validate_rooms(data: Any) -> tuple[dict[str, dict], str | None]:
             or not all(isinstance(v, (int, float)) for v in zone)
         ):
             return {}, f"'{name}': zone must be a list of 4 numbers [x1, y1, x2, y2]"
+        # dreame odrzuca strefy mniejsze niz ~2 kratki mapy (>100 mm na bok)
+        if (abs(zone[2] - zone[0]) < MIN_ZONE_MM
+                or abs(zone[3] - zone[1]) < MIN_ZONE_MM):
+            return {}, (
+                f"'{name}': zone is smaller than {MIN_ZONE_MM} mm on one side — "
+                "the robot rejects such zones"
+            )
         suction = room.get("suction", DEFAULTS["suction"])
         if suction not in SUCTION_LEVELS:
             return {}, f"'{name}': suction must be one of {SUCTION_LEVELS}"

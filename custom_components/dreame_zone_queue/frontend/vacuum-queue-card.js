@@ -74,7 +74,7 @@ class VacuumQueueCard extends HTMLElement {
     if (fp === this._fp) return;
     this._fp = fp;
     const struct = st
-      ? (st.attributes.items || []).map((i) => `${i.id}:${i.status}`).join("|")
+      ? (st.attributes.items || []).map((i) => `${i.id}:${i.status}:${i.interrupted ? 1 : 0}:${i.reason || ""}`).join("|")
         + "#" + st.state
         + "#" + (st.attributes.rooms || []).join(",")
         + "#" + (st.attributes.presets || []).join(",")
@@ -183,7 +183,9 @@ class VacuumQueueCard extends HTMLElement {
         <td class="room">${selMode && pending
             ? `<input type="checkbox" class="pick" data-id="${it.id}" ${this._sel.has(it.id) ? "checked" : ""}>`
             : ""}<span class="rst">${STATUS_ICON[it.status] || ""} </span>${ric(it.room, it.icon)}${it.room}<span class="est" data-id="${it.id}">${estTxt(it)}</span>
-          ${active ? '<span class="now">sprząta teraz</span>' : ""}</td>
+          ${active ? (it.interrupted
+              ? `<span class="now intr">⏸ ${it.reason || "przerwane"}</span>`
+              : '<span class="now">sprząta teraz</span>') : ""}</td>
         <td class="sx"><span class="fl">Ssanie</span>${editable ? sel(suctionOpts, it.suction, "suction", it.id, T_SUCTION) : `<span class="val">${T_SUCTION[it.suction] || it.suction}</span>`}</td>
         <td class="wx"><span class="fl">Mop</span>${editable ? sel(waterOpts, it.water, "water", it.id, T_WATER) : `<span class="val">${T_WATER[it.water] || it.water}</span>`}</td>
         <td class="rep"><span class="fl">Powt.</span>${pending ? sel(REPEATS, it.repeats, "repeats", it.id, null, "\u00D7") : `<span class="val">${it.repeats}\u00D7</span>`}</td>
@@ -228,6 +230,9 @@ class VacuumQueueCard extends HTMLElement {
         .st { width: 1.6em; text-align: center; }
         .room { font-weight: 500; }
         .now { display: none; }
+        .now.intr { display: inline-block; margin-left: 8px; font-size: .75em;
+                    font-weight: 600; color: var(--warning-color, #ff9800);
+                    white-space: nowrap; }
         .rep { width: 4.8em; }
         .rst { display: none; }
         .tblwrap { position: relative; }
@@ -282,6 +287,12 @@ class VacuumQueueCard extends HTMLElement {
                  color: var(--secondary-text-color); }
         .empty .e-ic { font-size: 1.9em; display: block; margin-bottom: 6px; opacity: .7; }
 
+        .sec { margin-top: ${c.compact ? "10px" : "14px"}; padding-top: ${c.compact ? "8px" : "10px"};
+               border-top: 1px solid var(--divider-color); }
+        .sechd { font-size: .68em; font-weight: 700; text-transform: uppercase;
+                 letter-spacing: .08em; color: var(--secondary-text-color);
+                 margin-bottom: 8px; }
+        .sec .addrow, .sec .actions, .sec .bulk, .sec .presets { margin-top: 0; }
         .addrow, .actions { display: flex; gap: 8px; margin-top: ${c.compact ? "10px" : "14px"};
                             flex-wrap: wrap; align-items: center; }
         .addrow select { padding: 8px 10px; flex: 1; min-width: 130px; border-radius: 10px; }
@@ -324,6 +335,8 @@ class VacuumQueueCard extends HTMLElement {
         :host(.narrow) .now { display: block; font-size: .7em; font-weight: 600;
           text-transform: uppercase; letter-spacing: .07em;
           color: var(--primary-color); margin-top: 1px; }
+        :host(.narrow) .now.intr { color: var(--warning-color, #ff9800);
+          margin-left: 0; text-transform: none; letter-spacing: normal; }
         :host(.narrow) td.ctl { grid-area: ctl; justify-self: end; width: auto; }
         :host(.narrow) td.sx { grid-area: sx; }
         :host(.narrow) td.wx { grid-area: wx; }
@@ -404,30 +417,9 @@ class VacuumQueueCard extends HTMLElement {
                <th>#</th><th></th><th>Pokój</th><th>Ssanie</th><th>Mop</th><th>Powt.</th><th></th>
              </tr></thead><tbody>${rows}</tbody></table></div>`
           : `<div class="empty"><span class="e-ic">\u{1F9F9}</span>Kolejka pusta — dodaj pokoje poniżej.</div>`}
-        ${c.show_add_row && !ro ? `<div class="addrow">
-          <select id="addRoom">${rooms.map((r) => `<option value="${r}">${ric(r)}${r}</option>`).join("")}</select>
-          <button class="btn" id="add" ${rooms.length ? "" : "disabled"}>+ Dodaj</button>
-        </div>` : ""}
-        ${c.show_bulk_edit && !ro && items.some((i) => i.status === "pending") ? `<div class="bulk">
-          <span class="seg">
-            <button id="bmAll" class="${selMode ? "" : "on"}">Wszystkie</button>
-            <button id="bmSel" class="${selMode ? "on" : ""}">${selMode ? `Wybrane (${this._sel.size})` : "Wybrane"}</button>
-          </span>
-          <select id="bulkS" ${selMode && this._sel.size === 0 ? "disabled" : ""}><option value="">ssanie\u2026</option>${SUCTION.map((o) => `<option value="${o}">${T_SUCTION[o] || o}</option>`).join("")}</select>
-          <select id="bulkW" ${selMode && this._sel.size === 0 ? "disabled" : ""}><option value="">mop\u2026</option>${WATER.map((o) => `<option value="${o}">${T_WATER[o] || o}</option>`).join("")}</select>
-          <select id="bulkR" ${selMode && this._sel.size === 0 ? "disabled" : ""}><option value="">powt.\u2026</option>${REPEATS.map((o) => `<option value="${o}">${o}\u00D7</option>`).join("")}</select>
-        </div>` : ""}
-        ${c.show_presets && !ro ? `<div class="presets">
-          <select id="presetSel" ${presets.length ? "" : "disabled"}>
-            ${presets.length
-              ? presets.map((p) => `<option value="${p}">\u2B50 ${p}</option>`).join("")
-              : `<option>\u2014 brak preset\u00F3w \u2014</option>`}
-          </select>
-          <button class="btn" id="pLoad" ${presets.length ? "" : "disabled"} title="Wczytaj preset (zast\u0119puje kolejk\u0119)">\u25B8 Wczytaj</button>
-          <button class="btn" id="pSave" title="Zapisz bie\u017C\u0105c\u0105 kolejk\u0119 jako preset">\uD83D\uDCBE</button>
-          <button class="btn warn" id="pDel" ${presets.length ? "" : "disabled"} title="Usu\u0144 preset">\uD83D\uDDD1</button>
-        </div>` : ""}
-        ${c.show_actions && !ro ? `<div class="actions">
+        ${c.show_actions && !ro ? `<div class="sec">
+          <div class="sechd">Sterowanie</div>
+          <div class="actions">
           ${st.state === "running"
             ? `<button class="btn primary" id="pause" title="Robot dokończy bieżący pokój">\u23F8 Pauza</button>
                <button class="btn" id="skip">\u23ED Pomiń</button>
@@ -438,6 +430,39 @@ class VacuumQueueCard extends HTMLElement {
                <button class="btn warn twoclick" id="stop">\u23F9 Stop</button>`
             : `<button class="btn primary" id="start">\u25B6 Start</button>
                <button class="btn warn twoclick" id="clear">\u2715 Wyczyść</button>`}
+          </div>
+        </div>` : ""}
+        ${c.show_add_row && !ro ? `<div class="sec">
+          <div class="sechd">Dodaj pok\u00F3j</div>
+          <div class="addrow">
+          <select id="addRoom">${rooms.map((r) => `<option value="${r}">${ric(r)}${r}</option>`).join("")}</select>
+          <button class="btn" id="add" ${rooms.length ? "" : "disabled"}>+ Dodaj</button>
+          </div>
+        </div>` : ""}
+        ${c.show_bulk_edit && !ro && items.some((i) => i.status === "pending") ? `<div class="sec">
+          <div class="sechd">Edytuj oczekuj\u0105ce</div>
+          <div class="bulk">
+          <span class="seg">
+            <button id="bmAll" class="${selMode ? "" : "on"}">Wszystkie</button>
+            <button id="bmSel" class="${selMode ? "on" : ""}">${selMode ? `Wybrane (${this._sel.size})` : "Wybrane"}</button>
+          </span>
+          <select id="bulkS" ${selMode && this._sel.size === 0 ? "disabled" : ""}><option value="">ssanie\u2026</option>${SUCTION.map((o) => `<option value="${o}">${T_SUCTION[o] || o}</option>`).join("")}</select>
+          <select id="bulkW" ${selMode && this._sel.size === 0 ? "disabled" : ""}><option value="">mop\u2026</option>${WATER.map((o) => `<option value="${o}">${T_WATER[o] || o}</option>`).join("")}</select>
+          <select id="bulkR" ${selMode && this._sel.size === 0 ? "disabled" : ""}><option value="">powt.\u2026</option>${REPEATS.map((o) => `<option value="${o}">${o}\u00D7</option>`).join("")}</select>
+          </div>
+        </div>` : ""}
+        ${c.show_presets && !ro ? `<div class="sec">
+          <div class="sechd">Presety</div>
+          <div class="presets">
+          <select id="presetSel" ${presets.length ? "" : "disabled"}>
+            ${presets.length
+              ? presets.map((p) => `<option value="${p}">\u2B50 ${p}</option>`).join("")
+              : `<option>\u2014 brak preset\u00F3w \u2014</option>`}
+          </select>
+          <button class="btn" id="pLoad" ${presets.length ? "" : "disabled"} title="Wczytaj preset (zast\u0119puje kolejk\u0119)">\u25B8 Wczytaj</button>
+          <button class="btn" id="pSave" title="Zapisz bie\u017C\u0105c\u0105 kolejk\u0119 jako preset">\uD83D\uDCBE</button>
+          <button class="btn warn" id="pDel" ${presets.length ? "" : "disabled"} title="Usu\u0144 preset">\uD83D\uDDD1</button>
+          </div>
         </div>` : ""}
       </ha-card>`;
 

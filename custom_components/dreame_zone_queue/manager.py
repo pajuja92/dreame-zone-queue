@@ -11,21 +11,22 @@ from homeassistant.helpers.event import async_call_later, async_track_state_chan
 from homeassistant.helpers.storage import Store
 
 from .const import (
+    CANCEL_REVERT_WINDOW_S,
     CONF_DELAY_BETWEEN_S,
     CONF_FINISHED_STATES,
     CONF_GRACE_S,
     CONF_ROOMS,
     CONF_MODE_SELECT,
     CONF_SUCTION_SELECT,
-    CONF_USE_SELECTS,
+    CONF_TASK_SENSOR,
     CONF_VACUUM_ENTITY,
-    CONF_WATER_PARAM,
+    CONF_WAIT_WASH,
     CONF_WATER_SELECT,
     DEFAULT_DELAY_BETWEEN_S,
     DEFAULT_FINISHED_STATES,
     DEFAULT_GRACE_S,
-    DEFAULT_WATER_PARAM,
     SIGNAL_QUEUE_UPDATED,
+    STALL_S,
     STATUS_ACTIVE,
     STATUS_DONE,
     STATUS_ERROR,
@@ -33,6 +34,10 @@ from .const import (
     STATUS_SKIPPED,
     STORAGE_KEY,
     STORAGE_VERSION,
+    SUCTION_TO_INT,
+    WASH_WAIT_TIMEOUT_S,
+    WATCHDOG_S,
+    WATER_TO_INT,
 )
 
 _LOGGER = logging.getLogger(__name__)
@@ -54,6 +59,16 @@ class QueueManager:
         self.stats: dict[str, dict] = {}
         self._unsub_state: Callable | None = None
         self._unsub_timer: Callable | None = None
+        self._unsub_task_sensor: Callable | None = None
+        self._unsub_bus: Callable | None = None
+        self._unsub_watchdog: Callable | None = None
+        # between-rooms mop-wash wait: {"since": monotonic, "seen": bool}
+        self._wait_wash: dict | None = None
+        # suppress cancel-detection for stops WE initiated
+        self._expect_stop_until: float = 0.0
+        # (item_id, monotonic) of the most recent "done" — cancel events
+        # arriving right after may revert it (robot stopped by the user)
+        self._last_done: tuple[int | None, float] = (None, 0.0)
 
     # ------------------------------------------------------------------
     # options helpers
@@ -82,6 +97,27 @@ class QueueManager:
     def finished_states(self) -> list[str]:
         return self._opts.get(CONF_FINISHED_STATES, DEFAULT_FINISHED_STATES)
 
+    @property
+    def wait_wash(self) -> bool:
+        return bool(self._opts.get(CONF_WAIT_WASH, False))
+
+    @property
+    def task_sensor_entity(self) -> str:
+        ent = self._opts.get(CONF_TASK_SENSOR)
+        if ent:
+            return ent
+        if "." not in self.vacuum_entity:
+            return ""
+        return f"sensor.{self.vacuum_entity.split('.', 1)[1]}_task_status"
+
+    def _task_status_value(self) -> str | None:
+        """Current value of the dreame task_status sensor, or None."""
+        ent = self.task_sensor_entity
+        st = self.hass.states.get(ent) if ent else None
+        if st is None or st.state in ("unknown", "unavailable"):
+            return None
+        return st.state.lower()
+
     # ------------------------------------------------------------------
     # lifecycle
     # ------------------------------------------------------------------
@@ -100,15 +136,23 @@ class QueueManager:
             self._unsub_state = async_track_state_change_event(
                 self.hass, [self.vacuum_entity], self._on_vacuum_state
             )
+        if self.task_sensor_entity:
+            self._unsub_task_sensor = async_track_state_change_event(
+                self.hass, [self.task_sensor_entity], self._on_task_sensor
+            )
+        # cancel-vs-complete detection: dreame fires this with job.completed
+        self._unsub_bus = self.hass.bus.async_listen(
+            "dreame_vacuum_task_status", self._on_task_event
+        )
         self._notify()
 
     async def async_unload(self) -> None:
-        if self._unsub_state:
-            self._unsub_state()
-            self._unsub_state = None
-        if self._unsub_timer:
-            self._unsub_timer()
-            self._unsub_timer = None
+        for attr in ("_unsub_state", "_unsub_timer", "_unsub_task_sensor",
+                     "_unsub_bus", "_unsub_watchdog"):
+            unsub = getattr(self, attr)
+            if unsub:
+                unsub()
+                setattr(self, attr, None)
         await self._save()
 
     async def _save(self) -> None:
@@ -209,6 +253,7 @@ class QueueManager:
         if item["status"] == STATUS_ACTIVE:
             # removing the item being cleaned = stop that room, move on
             self.queue.remove(item)
+            self._expect_stop_until = time.monotonic() + 15
             self._notify()
             _LOGGER.info("Active room '%s' removed — stopping it", item["room"])
             try:
@@ -304,12 +349,19 @@ class QueueManager:
             return
         active = self._active()
         if active is not None:
-            # kontynuacja: aktywny pokoj wciaz "w grze" — czekamy na robota,
-            # a jesli robot stoi zapauzowany, dajemy mu kuksanca do wznowienia
+            # kontynuacja: aktywny pokoj wciaz "w grze" — pogodz stan kolejki
+            # z FAKTYCZNYM stanem robota zamiast slepo czekac na event
             self.running = True
+            self._wait_wash = None
             self._notify()
+            self._schedule_watchdog()
             vac = self.hass.states.get(self.vacuum_entity)
-            if vac is not None and vac.state == "paused":
+            if vac is None:
+                return
+            a = vac.attributes
+            b = self._to_bool
+            if vac.state == "paused" or b(a.get("paused")) or b(a.get("cleaning_paused")):
+                # robot stoi zapauzowany -> kuksaniec do wznowienia
                 try:
                     await self.hass.services.async_call(
                         "vacuum", "start",
@@ -317,6 +369,16 @@ class QueueManager:
                     )
                 except Exception as err:  # noqa: BLE001
                     _LOGGER.warning("Resume nudge failed: %s", err)
+            elif (not b(a.get("zone_cleaning")) and not b(a.get("started"))
+                  and not self._task_running(vac)):
+                # robot nie ma juz ZADNEGO zadania (anulowane / zgubione)
+                # -> wyslij aktywny pokoj od nowa
+                _LOGGER.warning(
+                    "DZQ_DECISION | REDISPATCH_ON_RESUME | room=%s — robot has "
+                    "no task, restarting the active room", active["room"],
+                )
+                active["status"] = STATUS_PENDING
+                await self._dispatch_next()
             return
         if not any(i["status"] == STATUS_PENDING for i in self.queue):
             _LOGGER.info("Queue start requested but no pending items")
@@ -328,6 +390,8 @@ class QueueManager:
         """End the session: stop the robot, send it home, keep the list."""
         _LOGGER.warning("DZQ_ACTION | STOP")
         self.running = False
+        self._wait_wash = None
+        self._expect_stop_until = time.monotonic() + 15
         active = self._active()
         if active is not None:
             active["status"] = STATUS_SKIPPED
@@ -346,6 +410,10 @@ class QueueManager:
     async def async_pause(self) -> None:
         _LOGGER.warning("DZQ_ACTION | PAUSE")
         self.running = False
+        self._wait_wash = None
+        if self._unsub_timer:
+            self._unsub_timer()
+            self._unsub_timer = None
         self._notify()
 
     async def async_skip(self) -> None:
@@ -354,6 +422,7 @@ class QueueManager:
         if item is None:
             return
         item["status"] = STATUS_SKIPPED
+        self._expect_stop_until = time.monotonic() + 15
         self._notify()
         try:
             await self.hass.services.async_call(
@@ -368,6 +437,8 @@ class QueueManager:
         _LOGGER.warning("DZQ_ACTION | CLEAR | running=%s queue_len=%s", self.running, len(self.queue))
         was_running = self.running
         self.running = False
+        self._wait_wash = None
+        self._expect_stop_until = time.monotonic() + 15
         self.queue.clear()
         self._notify()
         if was_running:
@@ -569,11 +640,16 @@ class QueueManager:
 
         nxt["status"] = STATUS_ACTIVE
         nxt["started_at"] = time.time()
+        # reset per-run flags from any previous attempt
+        for key in ("interrupted", "was_interrupted", "interrupted_since",
+                    "reason", "seen_running"):
+            nxt.pop(key, None)
         self._dispatched_at = time.monotonic()
+        self._wait_wash = None
         self._notify()
+        self._schedule_watchdog()
 
         opts = self._opts
-        use_selects = opts.get(CONF_USE_SELECTS, False)
         suction_off = nxt["suction"] == "off"
         water_off = nxt["water"] == "off"
         if suction_off and water_off:
@@ -606,26 +682,12 @@ class QueueManager:
             except Exception as err:  # noqa: BLE001
                 _LOGGER.warning("Could not set cleaning mode via %s: %s", mode_select, err)
 
-            if use_selects:
-                for select_key, suffix, value in (
-                    (CONF_SUCTION_SELECT, "_suction_level", nxt["suction"]),
-                    (CONF_WATER_SELECT, "_mop_pad_humidity", nxt["water"]),
-                ):
-                    if value == "off":
-                        continue
-                    ent = self._derived_select(select_key, suffix)
-                    await self.hass.services.async_call(
-                        "select", "select_option",
-                        {"entity_id": ent,
-                         "option": self._resolve_option(ent, value)},
-                        blocking=True,
-                    )
-            else:
-                if not suction_off:
-                    data["suction_level"] = nxt["suction"]
-                water_param = opts.get(CONF_WATER_PARAM, DEFAULT_WATER_PARAM)
-                if water_param and not water_off:
-                    data[water_param] = nxt["water"]
+            # levels go as integer service params (supported by dreame
+            # master & dev) — no select round-trips at dispatch time
+            if not suction_off:
+                data["suction_level"] = SUCTION_TO_INT.get(nxt["suction"], 1)
+            if not water_off:
+                data["water_volume"] = WATER_TO_INT.get(nxt["water"], 2)
 
             _LOGGER.info("Dispatching zone for room '%s': %s", nxt["room"], data)
             await self.hass.services.async_call(
@@ -636,6 +698,10 @@ class QueueManager:
             nxt["status"] = STATUS_ERROR
             self.running = False
             self._notify()
+            self._user_notify(
+                f"Nie udało się wysłać strefy „{nxt['room']}”: {err}. "
+                "Kolejka wstrzymana."
+            )
 
     @staticmethod
     def _to_bool(v) -> bool:
@@ -662,28 +728,35 @@ class QueueManager:
         if not b(a.get("zone_cleaning")) and not b(a.get("started")):
             return False
 
-        # 0) vacuum_state mowi wprost co robot robi — najsilniejszy sygnal
+        # 0) sensor task_status integracji dreame — autorytatywna faza
+        #    zadania (zone_cleaning_paused / docking_paused / ...)
+        ts = self._task_status_value()
+        if ts and "paused" in ts:
+            return True
+
+        # 1) vacuum_state — wartosci wg realnego enuma dreame (StateOld
+        #    dla L10 Prime); *_available to zdolnosci doku, nie stan
         vs = str(a.get("vacuum_state", "")).lower()
         if vs in (
-            "returning_to_wash", "returning_to_charge",
-            "washing", "washing_paused", "drying",
-            "charging", "charging_paused",
+            "returning_to_wash", "washing", "washing_paused", "drying",
+            "charging", "smart_charging", "clean_add_water", "paused",
         ):
             return True
-        if "returning" in vs and ("wash" in vs or "charge" in vs):
-            return True
 
-        # 1) faktycznie trwajace / wstrzymane czynnosci serwisowe
+        # 2) faktycznie trwajace / wstrzymane czynnosci serwisowe
         if b(a.get("washing")) or b(a.get("washing_paused")):
             return True
-        if b(a.get("drying")):
+        if b(a.get("drying")) or b(a.get("auto_emptying")):
             return True
 
-        # 2) zadanie wstrzymane (recznie lub w drodze do bazy)
+        # 3) zadanie wstrzymane (recznie, w drodze do bazy, albo przez
+        #    niski akumulator — cleaning_paused to dedykowana flaga)
         if b(a.get("paused")) or b(a.get("returning_paused")):
             return True
+        if b(a.get("cleaning_paused")):
+            return True
 
-        # 3) powrot do bazy / ladowanie, ale z wlaczonym wznawianiem —
+        # 4) powrot do bazy / ladowanie, ale z wlaczonym wznawianiem —
         #    robot sam dokonczy pokoj, wiec czekamy
         resume = b(a.get("resume_cleaning"))
         if resume and b(a.get("charging")):
@@ -700,6 +773,263 @@ class QueueManager:
         a = state.attributes
         return self._to_bool(a.get("running")) and not self._to_bool(a.get("paused"))
 
+    # ------------------------------------------------------------------
+    # shared decision helpers
+    # ------------------------------------------------------------------
+    def _user_notify(self, message: str) -> None:
+        """Persistent notification in HA (best effort)."""
+        try:
+            from homeassistant.components.persistent_notification import (
+                async_create,
+            )
+            async_create(self.hass, message, title="Dreame Zone Queue",
+                         notification_id="dreame_zone_queue")
+        except Exception as err:  # noqa: BLE001
+            _LOGGER.debug("persistent_notification failed: %s", err)
+
+    @staticmethod
+    def _interrupt_reason(attrs: dict) -> str:
+        """Human-readable (PL) reason for an interruption, for the card."""
+        b = QueueManager._to_bool
+        if b(attrs.get("has_error")):
+            return f"błąd: {attrs.get('error') or '?'}"
+        if b(attrs.get("washing")) or b(attrs.get("washing_paused")):
+            return "mycie mopa"
+        if str(attrs.get("vacuum_state", "")).lower() == "returning_to_wash":
+            return "jedzie myć mopa"
+        if b(attrs.get("drying")):
+            return "suszenie mopa"
+        if b(attrs.get("cleaning_paused")) or b(attrs.get("charging")):
+            return "ładowanie"
+        if b(attrs.get("auto_emptying")):
+            return "opróżnianie kurzu"
+        if b(attrs.get("paused")) or b(attrs.get("returning_paused")):
+            return "wstrzymany"
+        return "przerwane"
+
+    def _mark_interrupted(self, item: dict, reason: str,
+                          notify_user: bool = False) -> None:
+        item["interrupted"] = True
+        item["was_interrupted"] = True
+        item["interrupted_since"] = time.time()
+        item["reason"] = reason
+        _LOGGER.warning("DZQ_DECISION | INTERRUPTED | room=%s reason=%s",
+                        item["room"], reason)
+        if notify_user:
+            self._user_notify(
+                f"Pokój „{item['room']}”: {reason}. Kolejka czeka."
+            )
+        self._notify()
+
+    def _finish_item(self, item: dict, why: str, state_str: str) -> None:
+        """Mark the active item done and (if running) line up the next one."""
+        started = item.get("started_at") or 0
+        duration = time.time() - started if started else 0
+        item["interrupted"] = False
+        item.pop("reason", None)
+        item["status"] = STATUS_DONE
+        # przerwane przebiegi (ladowanie/mycie w srodku) psuja srednia — pomijamy
+        if 30 < duration < 4 * 3600 and not item.get("was_interrupted"):
+            per_pass = duration / max(1, item.get("repeats", 1))
+            s = self.stats.setdefault(item["room"], {"avg_s": per_pass, "n": 0})
+            n = min(s.get("n", 0), 9)
+            s["avg_s"] = (s["avg_s"] * n + per_pass) / (n + 1)
+            s["n"] = n + 1
+        self._last_done = (item["id"], time.monotonic())
+        _LOGGER.warning("DZQ_DECISION | %s | room=%s state=%s duration=%.0fs",
+                        why, item["room"], state_str, duration)
+        self._notify()
+        if not self.running:
+            return
+        if self.wait_wash and item.get("water") != "off":
+            # nie wysylaj kolejnego pokoju, dopoki stacja nie umyje mopa
+            self._wait_wash = {"since": time.monotonic(), "seen": False}
+            _LOGGER.warning("DZQ_DECISION | WAIT_WASH | room=%s", item["room"])
+            self._schedule_watchdog()
+        else:
+            self._schedule_dispatch(self.delay_between_s)
+
+    async def _cancel_active(self, item: dict, reason: str) -> None:
+        """User cancelled the task on the robot/app — pause, don't advance."""
+        if self._unsub_timer:
+            self._unsub_timer()
+            self._unsub_timer = None
+        self.running = False
+        self._wait_wash = None
+        item["status"] = STATUS_PENDING
+        for key in ("interrupted", "reason", "started_at", "seen_running",
+                    "interrupted_since"):
+            item.pop(key, None)
+        _LOGGER.warning("DZQ_DECISION | CANCELLED | room=%s reason=%s",
+                        item["room"], reason)
+        self._user_notify(
+            f"Sprzątanie anulowane ({reason}) — kolejka wstrzymana na pokoju "
+            f"„{item['room']}”. Naciśnij Kontynuuj, aby wznowić."
+        )
+        self._notify()
+
+    # ------------------------------------------------------------------
+    # wash-wait (between rooms)
+    # ------------------------------------------------------------------
+    def _advance_wash_wait(self, attrs: dict) -> None:
+        """Progress the between-rooms mop-wash wait; dispatch when done."""
+        if self._wait_wash is None:
+            return
+        b = self._to_bool
+        vs = str(attrs.get("vacuum_state", "")).lower()
+        busy = (b(attrs.get("washing")) or b(attrs.get("washing_paused"))
+                or b(attrs.get("returning_to_wash"))
+                or vs in ("returning_to_wash", "washing", "washing_paused",
+                          "clean_add_water"))
+        if busy:
+            self._wait_wash["seen"] = True
+            return
+        timed_out = (time.monotonic() - self._wait_wash["since"]
+                     > WASH_WAIT_TIMEOUT_S)
+        if self._wait_wash["seen"] or timed_out:
+            if timed_out and not self._wait_wash["seen"]:
+                _LOGGER.warning(
+                    "DZQ_DECISION | WASH_WAIT_TIMEOUT — dispatching anyway")
+            self._wait_wash = None
+            if self.running:
+                self._schedule_dispatch(self.delay_between_s)
+
+    # ------------------------------------------------------------------
+    # watchdog / reconciliation (event-loss safety net)
+    # ------------------------------------------------------------------
+    def _schedule_watchdog(self) -> None:
+        if self._unsub_watchdog:
+            return
+
+        async def _fire(_now):
+            self._unsub_watchdog = None
+            try:
+                await self._async_reconcile()
+            finally:
+                if self.running or self._active() or self._wait_wash:
+                    self._schedule_watchdog()
+
+        self._unsub_watchdog = async_call_later(self.hass, WATCHDOG_S, _fire)
+
+    async def _async_reconcile(self) -> None:
+        """Level-based check of queue vs robot — recovers from lost events."""
+        st = self.hass.states.get(self.vacuum_entity)
+        if st is None:
+            return
+        a = st.attributes
+        b = self._to_bool
+        item = self._active()
+
+        if item is None:
+            self._advance_wash_wait(a)
+            if (self.running and self._wait_wash is None
+                    and self._unsub_timer is None
+                    and any(i["status"] == STATUS_PENDING for i in self.queue)):
+                _LOGGER.warning("DZQ_DECISION | WATCHDOG_DISPATCH — queue "
+                                "running but nothing scheduled")
+                await self._dispatch_next()
+            return
+
+        if time.monotonic() - self._dispatched_at < self.grace_s:
+            return
+
+        if self._task_running(st):
+            item["seen_running"] = True
+            if item.get("interrupted"):
+                item["interrupted"] = False
+                item.pop("reason", None)
+                _LOGGER.warning("DZQ_DECISION | RESUMED (watchdog) | room=%s",
+                                item["room"])
+                self._notify()
+            return
+
+        if st.state == "error" or b(a.get("has_error")):
+            if not item.get("interrupted"):
+                self._mark_interrupted(item, self._interrupt_reason(a),
+                                       notify_user=True)
+            return
+
+        if self._task_interrupted(st):
+            if not item.get("interrupted"):
+                self._mark_interrupted(item, self._interrupt_reason(a))
+            elif (time.time() - item.get("interrupted_since", time.time())
+                  > STALL_S):
+                # firmware porzuca wstrzymane zadanie po ~30 min — nie
+                # ma na co czekac; pauzujemy kolejke i mowimy czemu
+                self.running = False
+                self._user_notify(
+                    f"Pokój „{item['room']}” jest przerwany od ponad "
+                    f"{STALL_S // 60} min ({item.get('reason', '?')}) — "
+                    "kolejka wstrzymana."
+                )
+                item["interrupted_since"] = time.time()
+                self._notify()
+            return
+
+        # zadanie znikniete + robot odstawiony -> przegapiony koniec
+        task_gone = not b(a.get("zone_cleaning")) and not b(a.get("started"))
+        if task_gone and st.state in ("docked", "idle", "charging"):
+            if not b(a.get("located", True)):
+                await self._cancel_active(item, "robot zgubił pozycję")
+                return
+            if item.get("seen_running"):
+                self._finish_item(item, "DONE_WATCHDOG", st.state)
+            elif item.get("redispatched"):
+                item["status"] = STATUS_ERROR
+                self.running = False
+                self._notify()
+                self._user_notify(
+                    f"Pokój „{item['room']}”: robot dwukrotnie nie podjął "
+                    "strefy — kolejka wstrzymana."
+                )
+            else:
+                # komenda przepadla zanim robot ruszyl — jedna ponowka
+                _LOGGER.warning("DZQ_DECISION | REDISPATCH (watchdog) | "
+                                "room=%s — robot never started", item["room"])
+                item["status"] = STATUS_PENDING
+                item["redispatched"] = True
+                await self._dispatch_next()
+
+    # ------------------------------------------------------------------
+    # dreame event & task-sensor hooks
+    # ------------------------------------------------------------------
+    @callback
+    def _on_task_sensor(self, event: Event) -> None:
+        if self.running or self._active() or self._wait_wash:
+            self.hass.async_create_task(self._async_reconcile())
+
+    @callback
+    def _on_task_event(self, event: Event) -> None:
+        """dreame_vacuum_task_status: job.completed=False == user cancel."""
+        data = event.data or {}
+        ent = data.get("entity_id")
+        if ent and ent != self.vacuum_entity:
+            return
+        job = data.get("job") if isinstance(data.get("job"), dict) else data
+        completed = job.get("completed")
+        _LOGGER.warning("DZQ_EVENT | task_status | completed=%s", completed)
+        if completed is not False:
+            return
+        now = time.monotonic()
+        if now < self._expect_stop_until:
+            return  # stop, ktory sami zlecilismy (skip/stop/clear/remove)
+        if now - self._dispatched_at < self.grace_s:
+            return  # spurious completed at task start (dreame #419)
+        item = self._active()
+        if item is not None:
+            self.hass.async_create_task(
+                self._cancel_active(item, "zatrzymano na robocie"))
+            return
+        # pokoj przed chwila oznaczony done, a to byl cancel -> cofnij
+        last_id, last_ts = self._last_done
+        if last_id is not None and now - last_ts < CANCEL_REVERT_WINDOW_S:
+            it = next((i for i in self.queue
+                       if i["id"] == last_id and i["status"] == STATUS_DONE),
+                      None)
+            if it is not None:
+                self.hass.async_create_task(
+                    self._cancel_active(it, "zatrzymano na robocie"))
+
     @callback
     def _on_vacuum_state(self, event: Event) -> None:
         old = event.data.get("old_state")
@@ -711,40 +1041,54 @@ class QueueManager:
         na = new.attributes
         item = self._active()
         _LOGGER.warning(
-            "DZQ_DIAG | room=%s | %s→%s | vacuum_state=%s | "
+            "DZQ_DIAG | room=%s | %s→%s | vacuum_state=%s task_status=%s | "
             "zone_cleaning=%s started=%s running=%s paused=%s "
             "returning=%s returning_paused=%s charging=%s "
             "washing=%s washing_paused=%s drying=%s "
-            "resume_cleaning=%s | "
-            "cleaned_area=%s cleaning_time=%s current_segment=%s | "
-            "queue_running=%s interrupted=%s active_item=%s",
+            "resume_cleaning=%s located=%s has_error=%s | "
+            "queue_running=%s interrupted=%s wait_wash=%s active_item=%s",
             item.get("room") if item else "—",
             old.state, new.state,
-            na.get("vacuum_state"),
+            na.get("vacuum_state"), self._task_status_value(),
             na.get("zone_cleaning"), na.get("started"),
             na.get("running"), na.get("paused"),
             na.get("returning"), na.get("returning_paused"),
             na.get("charging"),
             na.get("washing"), na.get("washing_paused"),
             na.get("drying"),
-            na.get("resume_cleaning"),
-            na.get("cleaned_area"), na.get("cleaning_time"),
-            na.get("current_segment"),
+            na.get("resume_cleaning"), na.get("located"), na.get("has_error"),
             self.running,
             item.get("interrupted") if item else "—",
+            self._wait_wash is not None,
             item.get("room") if item else None,
         )
         # ── /diagnostic dump ─────────────────────────────────────────
 
-        if not self.running:
-            return
+        # UWAGA: przetwarzamy takze przy spauzowanej kolejce (running=False)
+        # — pokoj konczony "w tle" musi zostac zapisany jako done, inaczej
+        # wznowienie nie ma od czego ruszyc. Dispatch jest odpalany tylko
+        # gdy self.running (guard w _finish_item / _advance_wash_wait).
         if item is None:
+            self._advance_wash_wait(na)
             return
         if time.monotonic() - self._dispatched_at < self.grace_s:
             return
+
+        if self._task_running(new):
+            item["seen_running"] = True
+
+        # Robot w bledzie (utkniecie, szczotka, kosz...) -> czekamy na
+        # ratunek, pokazujemy powod, nie ruszamy kolejki.
+        if new.state == "error" or self._to_bool(na.get("has_error")):
+            if not item.get("interrupted"):
+                self._mark_interrupted(item, self._interrupt_reason(na),
+                                       notify_user=True)
+            return
+
         # Robot znow sprzata po serwisowej przerwie -> zdejmij flage.
         if item.get("interrupted") and self._task_running(new):
             item["interrupted"] = False
+            item.pop("reason", None)
             _LOGGER.warning("DZQ_DECISION | RESUMED | room=%s — robot resumed cleaning, clearing interrupted", item["room"])
             self._notify()
             return
@@ -755,16 +1099,7 @@ class QueueManager:
         # bo robot ZAWSZE jedzie myc mopa po kazdym pokoju.
         if item.get("interrupted") and not self._task_interrupted(new) and not self._task_running(new):
             if new.state in ("docked", "idle", "charging"):
-                item["interrupted"] = False
-                item["status"] = STATUS_DONE
-                started = item.get("started_at") or 0
-                duration = time.time() - started if started else 0
-                _LOGGER.warning(
-                    "DZQ_DECISION | DONE_AFTER_SERVICE | room=%s state=%s duration=%.0fs",
-                    item["room"], new.state, duration,
-                )
-                self._notify()
-                self._schedule_dispatch(self.delay_between_s)
+                self._finish_item(item, "DONE_AFTER_SERVICE", new.state)
                 return
 
         # Przejscie z aktywnego sprzatania w stan "przy bazie" LUB "paused".
@@ -777,33 +1112,14 @@ class QueueManager:
         if was_cleaning and entered_service:
             if self._task_interrupted(new):
                 if not item.get("interrupted"):
-                    item["interrupted"] = True
-                    _LOGGER.warning(
-                        "DZQ_DECISION | INTERRUPTED | room=%s | vacuum_state=%s "
-                        "charging=%s washing=%s paused=%s returning_paused=%s "
-                        "resume_cleaning=%s",
-                        item["room"],
-                        new.attributes.get("vacuum_state"),
-                        new.attributes.get("charging"),
-                        new.attributes.get("washing"),
-                        new.attributes.get("paused"),
-                        new.attributes.get("returning_paused"),
-                        new.attributes.get("resume_cleaning"),
-                    )
-                    self._notify()
+                    self._mark_interrupted(item, self._interrupt_reason(na))
                 return
-            item["status"] = STATUS_DONE
-            started = item.get("started_at") or 0
-            duration = time.time() - started if started else 0
-            if 30 < duration < 4 * 3600 and not item.get("interrupted"):
-                per_pass = duration / max(1, item.get("repeats", 1))
-                s = self.stats.setdefault(item["room"], {"avg_s": per_pass, "n": 0})
-                n = min(s.get("n", 0), 9)
-                s["avg_s"] = (s["avg_s"] * n + per_pass) / (n + 1)
-                s["n"] = n + 1
-            _LOGGER.warning("DZQ_DECISION | DONE | room=%s state=%s duration=%.0fs", item["room"], new.state, duration)
-            self._notify()
-            self._schedule_dispatch(self.delay_between_s)
+            if not self._to_bool(na.get("located", True)):
+                # relokacja nieudana — task porzucony przez firmware
+                self.hass.async_create_task(
+                    self._cancel_active(item, "robot zgubił pozycję"))
+                return
+            self._finish_item(item, "DONE", new.state)
 
     # ------------------------------------------------------------------
     # state exposed to the sensor / card
@@ -832,7 +1148,7 @@ class QueueManager:
                                       STATUS_ERROR) for i in self.queue)
         if self.running:
             state = "running"
-        elif has_pending and started:
+        elif self._active() is not None or (has_pending and started):
             state = "paused"
         else:
             state = "idle"

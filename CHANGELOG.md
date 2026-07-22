@@ -4,6 +4,73 @@ Wszystkie istotne zmiany w projekcie. Format oparty o
 [Keep a Changelog](https://keepachangelog.com/pl/1.1.0/),
 wersjonowanie zgodne z [SemVer](https://semver.org/lang/pl/).
 
+## [2.0.0-beta.1] - 2026-07-22
+
+Duża przebudowa orchestracji — **wersja beta**: nowa detekcja stanów robota,
+watchdog i obsługa zdarzeń pobocznych. Testowana symulacyjnie (12 scenariuszy,
+`tests/test_orchestrator_sim.py`); stabilne 2.0.0 po weryfikacji na robocie.
+
+### Dodane
+- **Watchdog rekoncyliacyjny** (co 60 s podczas pracy): kolejka nie zawiesza
+  się już po zgubionym evencie HA (np. znane serie błędów integracji dreame
+  przy przejściach mycia mopa — Tasshack#1719). Wykrywa przegapione
+  zakończenie pokoju, przegapione przerwanie, zgubioną komendę strefy
+  (jedna automatyczna ponowka) i zbyt długie przerwanie (>35 min — firmware
+  porzuca wstrzymane zadanie po ~30 min) z automatyczną pauzą kolejki.
+- **Sensor `task_status` integracji dreame** jako pierwszorzędny sygnał fazy
+  zadania (`zone_cleaning_paused`, `docking_paused`, ...); booleany encji
+  vacuum pozostają jako fallback. Encję można wskazać w ustawieniach
+  (domyślnie wyprowadzana z nazwy odkurzacza).
+- **Wykrywanie anulowania na robocie/w aplikacji** (event
+  `dreame_vacuum_task_status`, `job.completed=false`): zatrzymanie robota
+  przez użytkownika **wstrzymuje kolejkę** (pokój wraca do oczekujących),
+  zamiast fałszywego „ukończono" i wysłania kolejnego pokoju. Stopy zlecone
+  przez samą kolejkę (Pomiń/Stop/Wyczyść) są odfiltrowane.
+- **Obsługa błędów robota** (utknięcie, szczotka, kosz, brak wody...):
+  pokój oznaczany jako przerwany z powodem, powiadomienie w HA; po ratunku
+  i wznowieniu kolejka podejmuje pracę.
+- **Powód przerwania na karcie** (mycie mopa / ładowanie / błąd / wstrzymany)
+  przy aktywnym pokoju — zamiast „sprząta teraz".
+- **Opcja „Czekaj na mycie mopa między pokojami"**: kolejny pokój rusza
+  dopiero po umyciu mopa w stacji (bez tej opcji wysłanie następnej strefy
+  przerywa mycie i robot zawraca z brudnym mopem). Suszenie nie blokuje.
+- **Kontrola relokacji**: gdy robot zgubi pozycję (podniesiony/przeniesiony,
+  atrybut `located`), kolejka się wstrzymuje zamiast oznaczać pokój jako
+  ukończony.
+- **Walidacja rozmiaru strefy** (min. 120 mm na bok) przy dodawaniu/edycji
+  pokoju — robot odrzuca mniejsze strefy dopiero przy starcie.
+- Symulacyjny zestaw testów orchestratora (`tests/test_orchestrator_sim.py`,
+  bez Home Assistanta): `python3 tests/test_orchestrator_sim.py`.
+
+### Zmienione
+- **Poziomy ssania/mopa idą teraz jako parametry liczbowe
+  `suction_level`/`water_volume` w `vacuum_clean_zone`** (wspierane przez
+  dreame master i dev) — bez rundy po encjach select przy starcie strefy.
+  Ustawienia „parametr wody" i „ustawiaj przez selecty" usunięte (encje
+  select są nadal używane do zmian „na żywo" aktywnego pokoju i trybu
+  sprzątania przy poziomie „wył.").
+- **Pokój kończony przy spauzowanej kolejce jest zapisywany jako ukończony**
+  (wcześniej: sekwencja Pauza → robot kończy → Kontynuuj zawieszała kolejkę
+  na zawsze). „Kontynuuj" dodatkowo godzi stan kolejki ze stanem robota:
+  wznawia zapauzowanego, a przy braku zadania wysyła aktywny pokój od nowa.
+- Statystyki ETA nie liczą już przebiegów przerwanych ładowaniem/myciem
+  (wcześniej czas przerwy zawyżał średnią pokoju).
+- Lista wartości `vacuum_state` w detekcji przerwań wyrównana do realnego
+  enuma dreame (usunięte nieistniejące `returning_to_charge`,
+  `charging_paused`; dodane `smart_charging`, `clean_add_water`); dodane
+  flagi `cleaning_paused` (niski akumulator) i `auto_emptying` (inne modele).
+- Stan sensora kolejki pokazuje „paused" także gdy jest aktywny pokój bez
+  oczekujących.
+
+### Znane ograniczenia (architektura urządzenia)
+- „Wznawiaj sprzątanie po ładowaniu" (`resume_cleaning`) musi być włączone
+  w aplikacji Dreame — bez tego robot porzuca zadanie przy ładowaniu,
+  a pokój zostanie uznany za anulowany/ukończony.
+- Zadanie wstrzymane ręcznie dłużej niż ~30 min firmware porzuca sam —
+  kolejka wykryje to i się wstrzyma.
+- Mycie mopa w trakcie pokoju następuje wg licznika m² stacji
+  (`number.*_self_clean_area`, 5–15 m²) — to ustawienie robota, nie kolejki.
+
 ## [1.9.0] - 2026-07-06
 
 ### Naprawione

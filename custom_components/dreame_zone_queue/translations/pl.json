@@ -74,11 +74,11 @@
           "vacuum_entity": "Encja odkurzacza",
           "grace_seconds": "Okres ochronny po wysłaniu strefy (s)",
           "delay_between_zones": "Odstęp między strefami (s)",
-          "water_param": "Nazwa parametru wody w vacuum_clean_zone (puste = brak)",
-          "use_selects": "Ustawiaj poziomy przez encje select zamiast parametrów serwisu",
           "suction_select_entity": "Encja select ssania",
           "water_select_entity": "Encja select wilgotności mopa",
-          "cleaning_mode_select_entity": "Encja select trybu sprzątania (domyślnie: wyprowadzana z odkurzacza)"
+          "cleaning_mode_select_entity": "Encja select trybu sprzątania (domyślnie: wyprowadzana z odkurzacza)",
+          "wait_wash_between_rooms": "Czekaj na mycie mopa między pokojami",
+          "task_status_sensor": "Sensor task_status dreame (domyślnie: wyprowadzany z odkurzacza)"
         }
       },
       "bulk_edit": {
@@ -110,7 +110,8 @@
       "name_exists": "Pokój o tej nazwie już istnieje.",
       "invalid_rooms_yaml": "Niepoprawny YAML pokoi — szczegóły nad formularzem.",
       "no_dreame_rooms": "Nie znaleziono pokoi w encjach Dreame. Upewnij się, że kamera mapy działa i mapa jest wczytana.",
-      "no_rooms_found": "Nie znaleziono pokoi — sprawdź, czy encja kamery mapy ma atrybut „rooms”."
+      "no_rooms_found": "Nie znaleziono pokoi — sprawdź, czy encja kamery mapy ma atrybut „rooms”.",
+      "zone_too_small": "Strefa jest mniejsza niż 120 mm na jednym z boków — robot odrzuca takie strefy."
     },
     "abort": {
       "no_rooms": "Nie zdefiniowano jeszcze żadnych pokoi."

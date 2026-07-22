@@ -1,14 +1,21 @@
 {
   "domain": "dreame_zone_queue",
   "name": "Dreame Zone Queue",
-  "version": "1.9.0",
+  "version": "2.0.0-beta.1",
   "documentation": "https://github.com/pajuja92/dreame-zone-queue",
   "issue_tracker": "https://github.com/pajuja92/dreame-zone-queue/issues",
-  "codeowners": ["@pajuja92"],
+  "codeowners": [
+    "@pajuja92"
+  ],
   "config_flow": true,
   "integration_type": "service",
   "iot_class": "calculated",
-  "dependencies": ["http"],
-  "after_dependencies": ["dreame_vacuum", "lovelace"],
+  "dependencies": [
+    "http"
+  ],
+  "after_dependencies": [
+    "dreame_vacuum",
+    "lovelace"
+  ],
   "requirements": []
 }

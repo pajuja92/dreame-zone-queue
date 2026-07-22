@@ -26,14 +26,14 @@ from .const import (
     CONF_GRACE_S,
     CONF_ROOMS,
     CONF_SUCTION_SELECT,
-    CONF_USE_SELECTS,
+    CONF_TASK_SENSOR,
     CONF_VACUUM_ENTITY,
-    CONF_WATER_PARAM,
+    CONF_WAIT_WASH,
     CONF_WATER_SELECT,
     DEFAULT_DELAY_BETWEEN_S,
     DEFAULT_GRACE_S,
-    DEFAULT_WATER_PARAM,
     DOMAIN,
+    MIN_ZONE_MM,
     SUCTION_LEVELS,
     WATER_LEVELS,
 )
@@ -65,6 +65,12 @@ def _room_schema(defaults: dict | None = None) -> vol.Schema:
             ),
         }
     )
+
+
+def _zone_too_small(room: dict) -> bool:
+    z = room["zone"]
+    return (abs(z[2] - z[0]) < MIN_ZONE_MM
+            or abs(z[3] - z[1]) < MIN_ZONE_MM)
 
 
 def _room_from_input(user_input: dict) -> tuple[str, dict]:
@@ -143,6 +149,8 @@ class DreameZoneQueueOptionsFlow(config_entries.OptionsFlow):
                 errors["name"] = "name_required"
             elif name in self._rooms:
                 errors["name"] = "name_exists"
+            elif _zone_too_small(room):
+                errors["x1"] = "zone_too_small"
             else:
                 rooms = self._rooms
                 rooms[name] = room
@@ -170,15 +178,20 @@ class DreameZoneQueueOptionsFlow(config_entries.OptionsFlow):
     async def async_step_edit_room_form(self, user_input=None):
         rooms = self._rooms
         old_name = self._edit_room
+        errors = {}
         if user_input is not None:
             name, room = _room_from_input(user_input)
-            if name != old_name:
-                rooms.pop(old_name, None)
-            rooms[name] = room
-            return self._save(**{CONF_ROOMS: rooms})
+            if _zone_too_small(room):
+                errors["x1"] = "zone_too_small"
+            else:
+                if name != old_name:
+                    rooms.pop(old_name, None)
+                rooms[name] = room
+                return self._save(**{CONF_ROOMS: rooms})
         defaults = {"name": old_name, **rooms.get(old_name, {})}
         return self.async_show_form(
-            step_id="edit_room_form", data_schema=_room_schema(defaults)
+            step_id="edit_room_form", data_schema=_room_schema(defaults),
+            errors=errors,
         )
 
     async def async_step_remove_room(self, user_input=None):
@@ -325,11 +338,12 @@ class DreameZoneQueueOptionsFlow(config_entries.OptionsFlow):
                     NumberSelectorConfig(min=0, max=60, step=1, mode=NumberSelectorMode.BOX)
                 ),
                 vol.Required(
-                    CONF_WATER_PARAM, default=o.get(CONF_WATER_PARAM, DEFAULT_WATER_PARAM)
-                ): TextSelector(),
-                vol.Required(
-                    CONF_USE_SELECTS, default=o.get(CONF_USE_SELECTS, False)
+                    CONF_WAIT_WASH, default=o.get(CONF_WAIT_WASH, False)
                 ): BooleanSelector(),
+                vol.Optional(
+                    CONF_TASK_SENSOR,
+                    description={"suggested_value": o.get(CONF_TASK_SENSOR)},
+                ): EntitySelector(EntitySelectorConfig(domain="sensor")),
                 vol.Optional(
                     CONF_SUCTION_SELECT,
                     description={"suggested_value": o.get(CONF_SUCTION_SELECT)},

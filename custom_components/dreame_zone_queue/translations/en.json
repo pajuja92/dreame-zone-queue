@@ -74,11 +74,11 @@
           "vacuum_entity": "Vacuum entity",
           "grace_seconds": "Grace period after dispatch (s)",
           "delay_between_zones": "Delay between zones (s)",
-          "water_param": "Water parameter name in vacuum_clean_zone (empty = none)",
-          "use_selects": "Set levels via select entities instead of service parameters",
           "suction_select_entity": "Suction select entity",
           "water_select_entity": "Mop humidity select entity",
-          "cleaning_mode_select_entity": "Cleaning mode select entity (default: derived from vacuum)"
+          "cleaning_mode_select_entity": "Cleaning mode select entity (default: derived from vacuum)",
+          "wait_wash_between_rooms": "Wait for mop washing between rooms",
+          "task_status_sensor": "Dreame task_status sensor (default: derived from vacuum)"
         }
       },
       "bulk_edit": {
@@ -110,7 +110,8 @@
       "name_exists": "A room with this name already exists.",
       "invalid_rooms_yaml": "Invalid rooms YAML — details shown above the form.",
       "no_dreame_rooms": "No rooms found in the Dreame entities. Make sure the map camera works and the map is loaded.",
-      "no_rooms_found": "No rooms found — check that the map camera entity has a 'rooms' attribute."
+      "no_rooms_found": "No rooms found — check that the map camera entity has a 'rooms' attribute.",
+      "zone_too_small": "The zone is smaller than 120 mm on one side — the robot rejects such zones."
     },
     "abort": {
       "no_rooms": "No rooms defined yet."

@@ -382,15 +382,11 @@ data:
   repeats: 1
 ```
 
-Jeżeli Twoja wersja (beta) integracji dreame-vacuum **nie przyjmuje**
-parametru `water_volume` per strefa:
-
-- otwórz *Konfiguruj → Ustawienia* i wpisz właściwą nazwę parametru w polu
-  „Nazwa parametru wody" (np. `mop_pad_humidity`), **albo**
-- włącz opcję „Ustawiaj poziomy przez encje select" i wskaż encje
-  `select.dreame_l10_prime_suction_level` oraz
-  `select.dreame_l10_prime_mop_pad_humidity` — wtedy poziomy są ustawiane
-  przed startem każdej strefy, a `vacuum_clean_zone` dostaje same koordynaty.
+Od wersji 2.0.0 poziomy są wysyłane jako **parametry liczbowe**
+`suction_level` (0–3) i `water_volume` (1–3) w `vacuum_clean_zone` — obsługuje
+je zarówno stabilna, jak i beta wersja dreame-vacuum. Encje select są używane
+tylko do zmian „na żywo" aktywnego pokoju oraz przełączania trybu sprzątania
+przy poziomie „wył.".
 
 Pozostałe ustawienia:
 
@@ -399,13 +395,33 @@ Pozostałe ustawienia:
 - **Odstęp między strefami** — kolejna strefa jest wysyłana N sekund po
   wykryciu końca poprzedniej; robot dostaje komendę w stanie `returning`,
   więc zwykle nie wraca do doku między pokojami.
+- **Czekaj na mycie mopa między pokojami** — kolejny pokój rusza dopiero,
+  gdy stacja skończy mycie mopa (bez tej opcji następna strefa przerywa
+  mycie i robot jedzie z brudnym mopem). Suszenie nie blokuje kolejki.
+- **Sensor task_status dreame** — opcjonalnie wskaż
+  `sensor.<robot>_task_status`, jeśli nazwa Twojego robota różni się od
+  encji vacuum (domyślnie wyprowadzany automatycznie).
 
 ## Jak wykrywany jest koniec pokoju
 
-Przejście stanu encji odkurzacza `cleaning → returning/docked/idle/charging`
-(po upływie okresu ochronnego). Ręczna pauza w aplikacji (`paused`) nie
-przesuwa kolejki; błąd startu strefy oznacza pozycję jako `error` i pauzuje
-całą kolejkę.
+Sygnał pierwszorzędny to sensor `task_status` integracji dreame oraz flagi
+`zone_cleaning`/`started` encji odkurzacza; przejście
+`cleaning → returning/docked/idle/charging` (po okresie ochronnym) kończy
+pokój. Do tego:
+
+- **Watchdog** co 60 s porównuje stan kolejki ze stanem robota — zgubiony
+  event HA nie zawiesza już kolejki; zgubiona komenda strefy jest ponawiana
+  jeden raz.
+- **Przerwania serwisowe** (mycie/suszenie mopa, ładowanie, dolewanie wody)
+  w trakcie pokoju nie kończą go — kolejka czeka na automatyczne wznowienie
+  (wymaga włączonego „wznawiaj po ładowaniu" w aplikacji Dreame).
+- **Zatrzymanie robota przyciskiem lub w aplikacji** wstrzymuje kolejkę
+  (pokój wraca do oczekujących) — nic nie startuje samo po Twoim stopie.
+- **Błąd robota** (utknięcie, szczotka, kosz...) oznacza pokój jako
+  przerwany z powodem widocznym na karcie i wysyła powiadomienie HA.
+- **Zgubiona pozycja** (przeniesienie robota) wstrzymuje kolejkę.
+- Przerwanie trwające ponad 35 min pauzuje kolejkę (firmware i tak porzuca
+  wstrzymane zadanie po ~30 min).
 
 ## Historia zmian
 
@@ -413,6 +429,8 @@ Zobacz [CHANGELOG.md](CHANGELOG.md).
 
 ## Ograniczenia / plany
 
-- Reorder w karcie przez strzałki ▲▼ (drag&drop w planach).
 - Brak obsługi wielu map/pięter — koordynaty dotyczą aktywnej mapy.
-- Brak watchdoga czasu maksymalnego strefy (w planach).
+- „Wznawiaj sprzątanie po ładowaniu" musi być włączone w aplikacji Dreame —
+  bez tego robot porzuca zadanie przy ładowaniu w trakcie pokoju.
+- Częstotliwość mycia mopa W TRAKCIE pokoju kontroluje stacja
+  (`number.<robot>_self_clean_area`, 5–15 m²) — to ustawienie robota.
