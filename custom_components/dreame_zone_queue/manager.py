@@ -138,7 +138,8 @@ class QueueManager:
         self.stats = data.get("stats", {})
         self.feedback = bool(data.get("feedback", False))
         if self.feedback:
-            self._fb_attach()
+            # RotatingFileHandler otwiera plik przy tworzeniu — poza petla
+            await self.hass.async_add_executor_job(self._fb_attach)
         # After a restart the robot state is unknown -> never resume blindly.
         self.running = False
         for item in self.queue:
@@ -232,7 +233,7 @@ class QueueManager:
             return
         self.feedback = enabled
         if enabled:
-            self._fb_attach()
+            await self.hass.async_add_executor_job(self._fb_attach)
             self._fb("FEEDBACK ENABLED | version-aware full state logging on; "
                      f"file: {self.hass.config.path(FEEDBACK_LOG)}")
             st = self.hass.states.get(self.vacuum_entity)

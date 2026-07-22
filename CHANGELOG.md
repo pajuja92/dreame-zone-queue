@@ -4,6 +4,16 @@ Wszystkie istotne zmiany w projekcie. Format oparty o
 [Keep a Changelog](https://keepachangelog.com/pl/1.1.0/),
 wersjonowanie zgodne z [SemVer](https://semver.org/lang/pl/).
 
+## [2.0.0-beta.5] - 2026-07-22
+
+### Naprawione
+- **Przycisk 📝 (notatka) nie pojawiał się na karcie** mimo włączonego
+  trybu feedbacku: sensor kolejki ma białą listę atrybutów i nie
+  publikował pola `feedback` — karta nie wiedziała, że tryb jest aktywny.
+- **Ostrzeżenie „Detected blocking call to open... inside the event loop"**
+  przy włączaniu trybu feedbacku: plik logu jest teraz otwierany poza
+  pętlą zdarzeń (executor).
+
 ## [2.0.0-beta.4] - 2026-07-22
 
 ### Naprawione / UX przycisków
