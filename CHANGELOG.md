@@ -4,6 +4,15 @@ Wszystkie istotne zmiany w projekcie. Format oparty o
 [Keep a Changelog](https://keepachangelog.com/pl/1.1.0/),
 wersjonowanie zgodne z [SemVer](https://semver.org/lang/pl/).
 
+## [2.0.0-beta.2] - 2026-07-22
+
+### Naprawione
+- **Karta przewijała stronę na samą górę** przy każdej akcji przebudowującej
+  widok (przeniesienie pokoju, przełącznik Wszystkie/Wybrane, przyciski
+  sterujące) — dotkliwe przy długiej kolejce. Pełny re-render zapamiętuje
+  teraz i odtwarza pozycję scrolla wszystkich przewijalnych kontenerów
+  (także przez granice shadow DOM).
+
 ## [2.0.0-beta.1] - 2026-07-22
 
 Duża przebudowa orchestracji — **wersja beta**: nowa detekcja stanów robota,

@@ -124,13 +124,37 @@ class VacuumQueueCard extends HTMLElement {
     this._hass.callService("dreame_zone_queue", service, data);
   }
 
+  // Pelny _render podmienia caly DOM karty — przegladarka traci kotwice
+  // scrolla i strona skacze na gore (widoczne przy dlugiej kolejce).
+  // Zbieramy pozycje wszystkich przewijalnych przodkow (takze przez granice
+  // shadow DOM) i odtwarzamy je po przebudowie.
+  _saveScroll() {
+    const saved = [];
+    let n = this;
+    while (n) {
+      if (n.scrollTop > 0) saved.push([n, n.scrollTop]);
+      n = n.parentElement || (n.parentNode && (n.parentNode.host || n.parentNode));
+      if (n === document) break;
+    }
+    const se = document.scrollingElement;
+    if (se && se.scrollTop > 0) saved.push([se, se.scrollTop]);
+    return saved;
+  }
+  _restoreScroll(saved) {
+    const apply = () => saved.forEach(([el, top]) => { el.scrollTop = top; });
+    apply();
+    requestAnimationFrame(apply);
+  }
+
   _render(st) {
     if (!this.shadowRoot) this.attachShadow({ mode: "open" });
+    const scrolls = this._saveScroll();
     const c = this._config;
     if (!st) {
       this.shadowRoot.innerHTML =
         "<ha-card><div style='padding:16px'>Entity not found: " +
         c.entity + "</div></ha-card>";
+      this._restoreScroll(scrolls);
       return;
     }
     const items = st.attributes.items || [];
@@ -665,6 +689,8 @@ class VacuumQueueCard extends HTMLElement {
         dragId = null;
       });
     });
+
+    this._restoreScroll(scrolls);
   }
 }
 
