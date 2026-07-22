@@ -78,6 +78,7 @@ class VacuumQueueCard extends HTMLElement {
         + "#" + st.state
         + "#" + (st.attributes.rooms || []).join(",")
         + "#" + (st.attributes.presets || []).join(",")
+        + "#" + (st.attributes.feedback ? "fb" : "")
       : "missing";
     if (struct === this._structKey && this.shadowRoot) {
       this._patch(st);
@@ -224,6 +225,8 @@ class VacuumQueueCard extends HTMLElement {
 
         h2 { margin: 0 0 2px; font-size: 1.12em; font-weight: 650;
              display: flex; justify-content: space-between; align-items: center; }
+        .hdr { display: inline-flex; align-items: center; gap: 8px; }
+        .notebtn { margin-left: 0; font-size: .8em; padding: 3px 9px; }
         .badge { font-size: .7em; font-weight: 700; letter-spacing: .06em;
                  padding: 3px 10px; border-radius: 999px;
                  background: var(--secondary-background-color);
@@ -429,7 +432,9 @@ class VacuumQueueCard extends HTMLElement {
       </style>
       <ha-card>
         ${c.show_header ? `<h2>${c.title}
-          <span class="badge ${st.state}">${{ running: "PRACUJE", paused: "WSTRZYMANA", idle: "BEZCZYNNA" }[st.state] || st.state}</span>
+          <span class="hdr">${st.attributes.feedback
+              ? `<button class="ib notebtn" id="noteBtn" title="Zapisz notatkę do dziennika feedbacku">\u{1F4DD}</button>`
+              : ""}<span class="badge ${st.state}">${{ running: "PRACUJE", paused: "WSTRZYMANA", idle: "BEZCZYNNA" }[st.state] || st.state}</span></span>
         </h2>` : ""}
         ${c.show_robot_state ? `<div class="sub">robot: ${T_STATE[vacState] || vacState}</div>` : ""}
         ${c.show_progress && prog.total > 0 ? `<div class="prog">
@@ -510,6 +515,10 @@ class VacuumQueueCard extends HTMLElement {
         fn();
       };
     };
+    on("noteBtn", () => {
+      const t = prompt("Notatka do dziennika feedbacku — co się właśnie stało?");
+      if (t && t.trim()) this._call("note", { text: t.trim() });
+    });
     on("start", () => this._call("start"));
     on("pause", () => this._call("pause"));
     on("skip", () => this._call("skip"));

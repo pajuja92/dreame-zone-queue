@@ -4,6 +4,37 @@ Wszystkie istotne zmiany w projekcie. Format oparty o
 [Keep a Changelog](https://keepachangelog.com/pl/1.1.0/),
 wersjonowanie zgodne z [SemVer](https://semver.org/lang/pl/).
 
+## [2.0.0-beta.3] - 2026-07-22
+
+### Dodane
+- **Tryb feedbacku** (`switch.vacuum_zone_queue_feedback_log`): po włączeniu
+  każda zmiana stanu robota i sensora task_status jest logowana z pełnym
+  zrzutem atrybutów do **osobnego pliku** `/config/dreame_zone_queue_feedback.log`
+  (rotacja 2 MB × 3) oraz do logów HA pod osobnym źródłem
+  `dreame_zone_queue.feedback`. Wszystkie decyzje kolejki (`DZQ_*`) trafiają
+  tam automatycznie. Stan przełącznika przeżywa restart.
+- **Przycisk notatki 📝 na karcie** (widoczny przy włączonym feedbacku):
+  otwiera okienko, wpisana notatka („co naprawdę się stało") ląduje w
+  dzienniku feedbacku razem z pełnym stanem kolejki i robota. Dostępny też
+  jako serwis `dreame_zone_queue.note`.
+
+### Zmienione
+- **`DZQ_DIAG` przeniesiony na poziom debug** w głównym logu HA — koniec
+  spamu ostrzeżeń przy każdej zmianie stanu robota. Pełna diagnostyka
+  dostępna w trybie feedbacku; `DZQ_DECISION`/`DZQ_ACTION`/`DZQ_EVENT`
+  zostają na poziomie warning (są rzadkie).
+- **Przebudowana obsługa długiej pauzy** (firmware porzuca ręcznie
+  wstrzymane zadanie po ~30 min):
+  - po **25 min ręcznej pauzy** przychodzi powiadomienie „wznów w ciągu
+    ~5 min, inaczej robot porzuci zadanie";
+  - timeout liczy się **tylko dla ręcznej pauzy** — ładowanie z
+    auto-wznowieniem (45–60 min) i mycie mopa nie generują już fałszywych
+    alarmów;
+  - „ukończenie" przychodzące, gdy pokój wisiał przerwany **ponad 28 min**,
+    jest traktowane jako porzucenie zadania: pokój wraca do oczekujących,
+    kolejka się wstrzymuje (wcześniej: na wpół posprzątany pokój dostawał
+    status „done" i kolejka jechała dalej).
+
 ## [2.0.0-beta.2] - 2026-07-22
 
 ### Naprawione

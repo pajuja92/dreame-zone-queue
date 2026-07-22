@@ -1,6 +1,7 @@
 """Queue manager & orchestrator for Dreame Zone Queue."""
 from __future__ import annotations
 
+import json
 import logging
 import time
 from typing import Any, Callable
@@ -25,8 +26,11 @@ from .const import (
     DEFAULT_DELAY_BETWEEN_S,
     DEFAULT_FINISHED_STATES,
     DEFAULT_GRACE_S,
+    FEEDBACK_LOG,
+    FEEDBACK_LOGGER,
     SIGNAL_QUEUE_UPDATED,
-    STALL_S,
+    ABANDON_S,
+    STALL_WARN_S,
     STATUS_ACTIVE,
     STATUS_DONE,
     STATUS_ERROR,
@@ -69,6 +73,11 @@ class QueueManager:
         # (item_id, monotonic) of the most recent "done" — cancel events
         # arriving right after may revert it (robot stopped by the user)
         self._last_done: tuple[int | None, float] = (None, 0.0)
+        # feedback mode: full state dumps + user notes into a dedicated log
+        self.feedback: bool = False
+        self._fb_logger = logging.getLogger(FEEDBACK_LOGGER)
+        self._fb_handler: logging.Handler | None = None
+        self._fb_mirror: logging.Handler | None = None
 
     # ------------------------------------------------------------------
     # options helpers
@@ -127,6 +136,9 @@ class QueueManager:
         self._next_id = data.get("next_id", 1)
         self.presets = data.get("presets", {})
         self.stats = data.get("stats", {})
+        self.feedback = bool(data.get("feedback", False))
+        if self.feedback:
+            self._fb_attach()
         # After a restart the robot state is unknown -> never resume blindly.
         self.running = False
         for item in self.queue:
@@ -153,6 +165,7 @@ class QueueManager:
             if unsub:
                 unsub()
                 setattr(self, attr, None)
+        self._fb_detach()
         await self._save()
 
     async def _save(self) -> None:
@@ -162,7 +175,91 @@ class QueueManager:
                 "next_id": self._next_id,
                 "presets": self.presets,
                 "stats": self.stats,
+                "feedback": self.feedback,
             }
+        )
+
+    # ------------------------------------------------------------------
+    # feedback / diagnostics log
+    # ------------------------------------------------------------------
+    def _fb_attach(self) -> None:
+        """Route feedback entries to a dedicated rotating file in /config
+        and mirror every DZQ_* warning from this module there too."""
+        if self._fb_handler:
+            return
+        from logging.handlers import RotatingFileHandler
+        path = self.hass.config.path(FEEDBACK_LOG)
+        h = RotatingFileHandler(path, maxBytes=2_000_000, backupCount=2,
+                                encoding="utf-8")
+        h.setFormatter(logging.Formatter("%(asctime)s %(message)s"))
+        self._fb_logger.addHandler(h)
+        self._fb_handler = h
+
+        mgr = self
+
+        class _Mirror(logging.Handler):
+            def emit(self, record):
+                if mgr.feedback and mgr._fb_handler:
+                    mgr._fb_handler.emit(record)
+
+        self._fb_mirror = _Mirror()
+        _LOGGER.addHandler(self._fb_mirror)
+
+    def _fb_detach(self) -> None:
+        if self._fb_mirror:
+            _LOGGER.removeHandler(self._fb_mirror)
+            self._fb_mirror = None
+        if self._fb_handler:
+            self._fb_logger.removeHandler(self._fb_handler)
+            self._fb_handler.close()
+            self._fb_handler = None
+
+    def _fb(self, msg: str) -> None:
+        """Feedback entry: dedicated file + HA log (own logger name)."""
+        if self.feedback:
+            self._fb_logger.warning(msg)
+
+    @staticmethod
+    def _attrs_json(attrs: dict) -> str:
+        skip = ("rooms", "maps", "schedule", "ap", "capabilities",
+                "cleaning_sequence")
+        return json.dumps({k: v for k, v in attrs.items() if k not in skip},
+                          default=str, ensure_ascii=False)
+
+    async def async_set_feedback(self, enabled: bool) -> None:
+        enabled = bool(enabled)
+        if enabled == self.feedback:
+            return
+        self.feedback = enabled
+        if enabled:
+            self._fb_attach()
+            self._fb("FEEDBACK ENABLED | version-aware full state logging on; "
+                     f"file: {self.hass.config.path(FEEDBACK_LOG)}")
+            st = self.hass.states.get(self.vacuum_entity)
+            if st is not None:
+                self._fb(f"SNAPSHOT | state={st.state} | "
+                         f"attrs={self._attrs_json(dict(st.attributes))}")
+        else:
+            self._fb_logger.warning("FEEDBACK DISABLED")
+            self._fb_detach()
+        self._notify()
+
+    async def async_note(self, text: str) -> None:
+        """User note: what ACTUALLY happened — anchored in the feedback log."""
+        st = self.hass.states.get(self.vacuum_entity)
+        snap = self.snapshot
+        queue_brief = [
+            {"room": i["room"], "status": i["status"],
+             "interrupted": i.get("interrupted", False)}
+            for i in snap["items"]
+        ]
+        self._fb_logger.warning(
+            "NOTE | %s | queue_state=%s running=%s | queue=%s | "
+            "vacuum_state=%s | attrs=%s",
+            text, snap["state"], self.running,
+            json.dumps(queue_brief, ensure_ascii=False),
+            st.state if st else None,
+            self._attrs_json(dict(st.attributes)) if st else "{}",
         )
 
     @callback
@@ -641,8 +738,10 @@ class QueueManager:
         nxt["status"] = STATUS_ACTIVE
         nxt["started_at"] = time.time()
         # reset per-run flags from any previous attempt
+        # (NOT "redispatched" — it caps the watchdog's lost-command retry
+        # and must survive the retry dispatch itself)
         for key in ("interrupted", "was_interrupted", "interrupted_since",
-                    "reason", "seen_running"):
+                    "reason", "seen_running", "stall_warned"):
             nxt.pop(key, None)
         self._dispatched_at = time.monotonic()
         self._wait_wash = None
@@ -807,6 +906,14 @@ class QueueManager:
             return "wstrzymany"
         return "przerwane"
 
+    def _abandoned(self, item: dict) -> bool:
+        """'Ukonczone' przychodzace, gdy pokoj wisi jako przerwany dluzej
+        niz okno firmware (~30 min) = porzucenie zadania, nie sukces."""
+        if not item.get("interrupted"):
+            return False
+        since = item.get("interrupted_since")
+        return bool(since) and time.time() - since > ABANDON_S
+
     def _mark_interrupted(self, item: dict, reason: str,
                           notify_user: bool = False) -> None:
         item["interrupted"] = True
@@ -858,7 +965,7 @@ class QueueManager:
         self._wait_wash = None
         item["status"] = STATUS_PENDING
         for key in ("interrupted", "reason", "started_at", "seen_running",
-                    "interrupted_since"):
+                    "interrupted_since", "stall_warned", "redispatched"):
             item.pop(key, None)
         _LOGGER.warning("DZQ_DECISION | CANCELLED | room=%s reason=%s",
                         item["room"], reason)
@@ -937,7 +1044,8 @@ class QueueManager:
             item["seen_running"] = True
             if item.get("interrupted"):
                 item["interrupted"] = False
-                item.pop("reason", None)
+                for key in ("reason", "interrupted_since", "stall_warned"):
+                    item.pop(key, None)
                 _LOGGER.warning("DZQ_DECISION | RESUMED (watchdog) | room=%s",
                                 item["room"])
                 self._notify()
@@ -952,18 +1060,31 @@ class QueueManager:
         if self._task_interrupted(st):
             if not item.get("interrupted"):
                 self._mark_interrupted(item, self._interrupt_reason(a))
-            elif (time.time() - item.get("interrupted_since", time.time())
-                  > STALL_S):
-                # firmware porzuca wstrzymane zadanie po ~30 min — nie
-                # ma na co czekac; pauzujemy kolejke i mowimy czemu
-                self.running = False
-                self._user_notify(
-                    f"Pokój „{item['room']}” jest przerwany od ponad "
-                    f"{STALL_S // 60} min ({item.get('reason', '?')}) — "
-                    "kolejka wstrzymana."
+            else:
+                # Ostrzezenie PRZED porzuceniem zadania przez firmware
+                # (~30 min RECZNEJ pauzy). Ladowanie / mycie / suszenie to
+                # legalne dlugie przerwy — firmware sam je wznowi, nie
+                # odliczamy dla nich timeoutu.
+                manual_pause = (
+                    b(a.get("paused"))
+                    and not b(a.get("charging"))
+                    and not b(a.get("cleaning_paused"))
+                    and not b(a.get("washing"))
+                    and not b(a.get("washing_paused"))
+                    and not b(a.get("drying"))
                 )
-                item["interrupted_since"] = time.time()
-                self._notify()
+                waited = time.time() - item.get("interrupted_since",
+                                                time.time())
+                if (manual_pause and waited > STALL_WARN_S
+                        and not item.get("stall_warned")):
+                    item["stall_warned"] = True
+                    self._user_notify(
+                        f"Robot stoi wstrzymany na pokoju „{item['room']}” "
+                        f"od {int(waited // 60)} min. Wznów go w ciągu ok. "
+                        "5 min — inaczej firmware porzuci zadanie i pokój "
+                        "zacznie się od nowa."
+                    )
+                    self._notify()
             return
 
         # zadanie znikniete + robot odstawiony -> przegapiony koniec
@@ -971,6 +1092,10 @@ class QueueManager:
         if task_gone and st.state in ("docked", "idle", "charging"):
             if not b(a.get("located", True)):
                 await self._cancel_active(item, "robot zgubił pozycję")
+                return
+            if self._abandoned(item):
+                await self._cancel_active(
+                    item, "robot porzucił wstrzymane zadanie")
                 return
             if item.get("seen_running"):
                 self._finish_item(item, "DONE_WATCHDOG", st.state)
@@ -995,6 +1120,10 @@ class QueueManager:
     # ------------------------------------------------------------------
     @callback
     def _on_task_sensor(self, event: Event) -> None:
+        if self.feedback:
+            o, n = event.data.get("old_state"), event.data.get("new_state")
+            self._fb("TASK_SENSOR | %s→%s" % (
+                o.state if o else None, n.state if n else None))
         if self.running or self._active() or self._wait_wash:
             self.hass.async_create_task(self._async_reconcile())
 
@@ -1038,15 +1167,17 @@ class QueueManager:
             return
 
         # ── diagnostic dump — fires on EVERY state change ────────────
+        # zwykly log: debug (bez spamu); tryb feedback: pelny zrzut atrybutow
         na = new.attributes
         item = self._active()
-        _LOGGER.warning(
+        diag = (
             "DZQ_DIAG | room=%s | %s→%s | vacuum_state=%s task_status=%s | "
             "zone_cleaning=%s started=%s running=%s paused=%s "
             "returning=%s returning_paused=%s charging=%s "
             "washing=%s washing_paused=%s drying=%s "
             "resume_cleaning=%s located=%s has_error=%s | "
-            "queue_running=%s interrupted=%s wait_wash=%s active_item=%s",
+            "queue_running=%s interrupted=%s wait_wash=%s active_item=%s"
+        ) % (
             item.get("room") if item else "—",
             old.state, new.state,
             na.get("vacuum_state"), self._task_status_value(),
@@ -1062,6 +1193,9 @@ class QueueManager:
             self._wait_wash is not None,
             item.get("room") if item else None,
         )
+        _LOGGER.debug("%s", diag)
+        if self.feedback:
+            self._fb(f"{diag} | attrs={self._attrs_json(dict(na))}")
         # ── /diagnostic dump ─────────────────────────────────────────
 
         # UWAGA: przetwarzamy takze przy spauzowanej kolejce (running=False)
@@ -1088,7 +1222,8 @@ class QueueManager:
         # Robot znow sprzata po serwisowej przerwie -> zdejmij flage.
         if item.get("interrupted") and self._task_running(new):
             item["interrupted"] = False
-            item.pop("reason", None)
+            for key in ("reason", "interrupted_since", "stall_warned"):
+                item.pop(key, None)
             _LOGGER.warning("DZQ_DECISION | RESUMED | room=%s — robot resumed cleaning, clearing interrupted", item["room"])
             self._notify()
             return
@@ -1099,6 +1234,10 @@ class QueueManager:
         # bo robot ZAWSZE jedzie myc mopa po kazdym pokoju.
         if item.get("interrupted") and not self._task_interrupted(new) and not self._task_running(new):
             if new.state in ("docked", "idle", "charging"):
+                if self._abandoned(item):
+                    self.hass.async_create_task(self._cancel_active(
+                        item, "robot porzucił wstrzymane zadanie"))
+                    return
                 self._finish_item(item, "DONE_AFTER_SERVICE", new.state)
                 return
 
@@ -1179,4 +1318,5 @@ class QueueManager:
             "room_icons": {n: r.get("icon", "") for n, r in self.rooms.items()},
             "count_pending": sum(1 for i in self.queue if i["status"] == STATUS_PENDING),
             "vacuum_entity": self.vacuum_entity,
+            "feedback": self.feedback,
         }

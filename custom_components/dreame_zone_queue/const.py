@@ -1,7 +1,7 @@
 """Constants for Dreame Zone Queue."""
 
 DOMAIN = "dreame_zone_queue"
-VERSION = "2.0.0-beta.2"
+VERSION = "2.0.0-beta.3"
 
 URL_BASE = "/dreame_zone_queue_files"
 CARD_FILENAME = "vacuum-queue-card.js"
@@ -24,7 +24,10 @@ DEFAULT_FINISHED_STATES = ["returning", "docked", "idle", "charging"]
 
 # orchestrator timings
 WATCHDOG_S = 60            # reconciliation interval while the queue is alive
-STALL_S = 35 * 60          # firmware abandons a paused task after ~30 min
+# firmware abandons a MANUALLY paused task after ~30 min: warn the user
+# before that happens, and treat a "completed" arriving after it as abandonment
+STALL_WARN_S = 25 * 60
+ABANDON_S = 28 * 60
 CANCEL_REVERT_WINDOW_S = 15  # how long after "done" a cancel event may revert it
 WASH_WAIT_TIMEOUT_S = 180  # give up waiting for a between-rooms mop wash
 MIN_ZONE_MM = 120          # dreame rejects zones smaller than ~2 map grid cells
@@ -45,6 +48,11 @@ STATUS_ERROR = "error"
 
 STORAGE_VERSION = 1
 STORAGE_KEY = f"{DOMAIN}.queue"
+
+# feedback / diagnostics
+FEEDBACK_LOG = "dreame_zone_queue_feedback.log"  # in the HA config dir
+FEEDBACK_LOGGER = f"{DOMAIN}.feedback"
+SERVICE_NOTE = "note"
 
 SIGNAL_QUEUE_UPDATED = f"{DOMAIN}_queue_updated"
 

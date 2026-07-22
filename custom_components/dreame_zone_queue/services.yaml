@@ -165,3 +165,17 @@ set_all_params:
     suction: {name: Suction, selector: {select: {options: [off, quiet, standard, strong, turbo]}}}
     water: {name: Water, selector: {select: {options: [off, slightly_dry, moist, wet]}}}
     repeats: {name: Repeats, selector: {number: {min: 1, max: 3, mode: box}}}
+
+note:
+  name: Add feedback note
+  description: >-
+    Zapisuje notatkę użytkownika (co faktycznie się stało) do dziennika
+    feedbacku wraz z pełnym stanem kolejki i robota.
+  fields:
+    text:
+      name: Notatka
+      description: Treść notatki
+      required: true
+      selector:
+        text:
+          multiline: true

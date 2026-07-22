@@ -26,6 +26,7 @@ from .const import (
     SERVICE_ADD,
     SERVICE_CLEAR,
     SERVICE_MOVE,
+    SERVICE_NOTE,
     SERVICE_PAUSE,
     SERVICE_REMOVE,
     SERVICE_SET_PARAMS,
@@ -40,7 +41,7 @@ from .manager import QueueManager
 from .rooms import rooms_to_yaml, validate_rooms
 
 _LOGGER = logging.getLogger(__name__)
-PLATFORMS = ["sensor", "button"]
+PLATFORMS = ["sensor", "button", "switch"]
 
 SCHEMA_ADD = vol.Schema(
     {
@@ -162,6 +163,10 @@ def _register_services(hass: HomeAssistant) -> None:
     hass.services.async_register(DOMAIN, SERVICE_CLEAR, wrap("async_clear"))
 
     hass.services.async_register(DOMAIN, "stop", wrap("async_stop"))
+    hass.services.async_register(
+        DOMAIN, SERVICE_NOTE, wrap("async_note"),
+        vol.Schema({vol.Required("text"): cv.string}),
+    )
     hass.services.async_register(
         DOMAIN, "set_all_params", wrap("async_set_all"),
         vol.Schema({

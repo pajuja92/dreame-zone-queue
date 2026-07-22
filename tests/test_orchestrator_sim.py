@@ -355,6 +355,69 @@ async def test_task_sensor_paused_wins():  # P2
     assert m.queue[0]["interrupted"]
 
 
+async def test_abandoned_pause_reverts_to_pending():
+    # >28 min recznej pauzy, potem firmware porzuca task ("completed")
+    hass, m = mk()
+    await m.async_setup()
+    await m.async_add("Salon")
+    hass.states[VAC] = st("docked", **TASK_DONE)
+    await m.async_start()
+    item = m.queue[0]
+    send(m, st("cleaning", **CLEANING),
+         st("paused", zone_cleaning=True, started=True, running=False,
+            paused=True))
+    assert item["interrupted"]
+    item["interrupted_since"] = __import__("time").time() - 29 * 60
+    send(m, st("paused", zone_cleaning=True, started=True, paused=True),
+         st("docked", **TASK_DONE))  # firmware gave up -> looks "completed"
+    await drain()
+    assert item["status"] == "pending" and not m.running
+    assert any("porzucił" in n for n in NOTIFICATIONS)
+
+
+async def test_long_charging_no_false_alarm():
+    # ladowanie z resume trwa 45 min — zadnego timeoutu ani ostrzezenia
+    hass, m = mk()
+    await m.async_setup()
+    await m.async_add("Salon")
+    hass.states[VAC] = st("docked", **TASK_DONE)
+    await m.async_start()
+    item = m.queue[0]
+    charging = st("docked", zone_cleaning=True, started=True, running=False,
+                  charging=True, resume_cleaning=True)
+    send(m, st("cleaning", **CLEANING), charging)
+    assert item["interrupted"]
+    item["interrupted_since"] = __import__("time").time() - 45 * 60
+    hass.states[VAC] = charging
+    await m._async_reconcile()
+    assert m.running and not NOTIFICATIONS  # queue keeps waiting quietly
+    # robot resumes and finishes normally
+    send(m, charging, st("cleaning", **CLEANING))
+    assert not item["interrupted"]
+    send(m, st("cleaning", **CLEANING), st("docked", **TASK_DONE))
+    assert item["status"] == "done"
+
+
+async def test_stall_warning_on_manual_pause():
+    # 26 min recznej pauzy -> jednorazowe ostrzezenie, kolejka dalej czeka
+    hass, m = mk()
+    await m.async_setup()
+    await m.async_add("Salon")
+    hass.states[VAC] = st("docked", **TASK_DONE)
+    await m.async_start()
+    item = m.queue[0]
+    paused = st("paused", zone_cleaning=True, started=True, running=False,
+                paused=True)
+    send(m, st("cleaning", **CLEANING), paused)
+    item["interrupted_since"] = __import__("time").time() - 26 * 60
+    hass.states[VAC] = paused
+    await m._async_reconcile()
+    assert m.running and item["stall_warned"]
+    assert any("Wznów" in n for n in NOTIFICATIONS)
+    await m._async_reconcile()
+    assert sum("Wznów" in n for n in NOTIFICATIONS) == 1  # warned once
+
+
 SCENARIOS = [v for k, v in sorted(globals().items()) if k.startswith("test_")]
 
 
