@@ -418,6 +418,36 @@ async def test_stall_warning_on_manual_pause():
     assert sum("Wznów" in n for n in NOTIFICATIONS) == 1  # warned once
 
 
+async def test_dock_keeps_room_pending():
+    hass, m = mk()
+    await m.async_setup()
+    await m.async_add("Salon")
+    hass.states[VAC] = st("docked", **TASK_DONE)
+    await m.async_start()
+    await m.async_dock()
+    assert not m.running and m.queue[0]["status"] == "pending"
+    assert ("vacuum", "return_to_base") in [(c[0], c[1])
+                                            for c in hass.services.calls]
+    # completed=False po naszym docku NIE jest anulowaniem uzytkownika
+    handler = hass.bus.listeners["dreame_vacuum_task_status"]
+    handler(FakeEvent({"entity_id": VAC, "job": {"completed": False}}))
+    await drain()
+    assert not any("anulowane" in n for n in NOTIFICATIONS)
+
+
+async def test_clear_with_active_while_paused_stops_robot():
+    hass, m = mk()
+    await m.async_setup()
+    await m.async_add("Salon")
+    hass.states[VAC] = st("docked", **TASK_DONE)
+    await m.async_start()
+    await m.async_pause()  # kolejka spauzowana, robot wciaz sprzata pokoj
+    await m.async_clear()
+    calls = [(c[0], c[1]) for c in hass.services.calls]
+    assert ("vacuum", "stop") in calls and ("vacuum", "return_to_base") in calls
+    assert not m.queue
+
+
 SCENARIOS = [v for k, v in sorted(globals().items()) if k.startswith("test_")]
 
 

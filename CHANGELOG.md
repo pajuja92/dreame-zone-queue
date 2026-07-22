@@ -4,6 +4,25 @@ Wszystkie istotne zmiany w projekcie. Format oparty o
 [Keep a Changelog](https://keepachangelog.com/pl/1.1.0/),
 wersjonowanie zgodne z [SemVer](https://semver.org/lang/pl/).
 
+## [2.0.0-beta.4] - 2026-07-22
+
+### Naprawione / UX przycisków
+- **Natychmiastowy feedback po kliknięciu**: przyciski sterujące gasną
+  (⏳) od razu po kliknięciu aż do aktualizacji stanu (z awaryjnym
+  timeoutem 5 s) — koniec wielokrotnego klikania „bo nie wiadomo, czy
+  weszło".
+- **Zestawy przycisków dopasowane do faktycznego stanu**:
+  - po ręcznym **Stopie** karta nie pokazuje już Stopu i Pomiń, jakby
+    sesja trwała — zostaje „▶ Kontynuuj" i „✕ Wyczyść";
+  - „⏭ Pomiń" widoczny tylko, gdy faktycznie jest aktywny pokój;
+  - przy pauzie z aktywnym pokojem: „✕ Wyczyść" zamiast drugiego Stopu.
+- **Nowy przycisk „🏠 Do bazy"** (pauza z aktywnym pokojem) + serwis
+  `dreame_zone_queue.dock`: robot wraca do stacji **bez kończenia sesji**
+  — aktywny pokój wraca do oczekujących, „Kontynuuj" podejmie go później.
+- **„Wyczyść" przy sprzątającym robocie** teraz zatrzymuje go i odsyła do
+  stacji także wtedy, gdy kolejka była już spauzowana (wcześniej robot
+  kończył pokój mimo wyczyszczonej kolejki).
+
 ## [2.0.0-beta.3] - 2026-07-22
 
 ### Dodane

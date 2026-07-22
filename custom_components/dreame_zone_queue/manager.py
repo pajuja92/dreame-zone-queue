@@ -504,6 +504,31 @@ class QueueManager:
         except Exception as err:  # noqa: BLE001
             _LOGGER.warning("Stop failed: %s", err)
 
+    async def async_dock(self) -> None:
+        """Send the robot home WITHOUT ending the session: the active room
+        goes back to pending, the queue pauses and can be continued later."""
+        _LOGGER.warning("DZQ_ACTION | DOCK")
+        self.running = False
+        self._wait_wash = None
+        if self._unsub_timer:
+            self._unsub_timer()
+            self._unsub_timer = None
+        self._expect_stop_until = time.monotonic() + 15
+        item = self._active()
+        if item is not None:
+            item["status"] = STATUS_PENDING
+            for key in ("interrupted", "reason", "started_at", "seen_running",
+                        "interrupted_since", "stall_warned", "redispatched"):
+                item.pop(key, None)
+        self._notify()
+        try:
+            await self.hass.services.async_call(
+                "vacuum", "return_to_base",
+                {"entity_id": self.vacuum_entity}, blocking=False,
+            )
+        except Exception as err:  # noqa: BLE001
+            _LOGGER.warning("return_to_base failed: %s", err)
+
     async def async_pause(self) -> None:
         _LOGGER.warning("DZQ_ACTION | PAUSE")
         self.running = False
@@ -532,20 +557,28 @@ class QueueManager:
 
     async def async_clear(self) -> None:
         _LOGGER.warning("DZQ_ACTION | CLEAR | running=%s queue_len=%s", self.running, len(self.queue))
+        # robot moze fizycznie sprzatac takze przy SPAUZOWANEJ kolejce
+        # (konczy biezacy pokoj) — czyszczenie z aktywnym pokojem musi
+        # go zatrzymac i odeslac, nie tylko przy running=True
+        had_active = self._active() is not None
         was_running = self.running
         self.running = False
         self._wait_wash = None
         self._expect_stop_until = time.monotonic() + 15
         self.queue.clear()
         self._notify()
-        if was_running:
+        if was_running or had_active:
             try:
+                await self.hass.services.async_call(
+                    "vacuum", "stop", {"entity_id": self.vacuum_entity},
+                    blocking=True,
+                )
                 await self.hass.services.async_call(
                     "vacuum", "return_to_base",
                     {"entity_id": self.vacuum_entity}, blocking=False,
                 )
             except Exception as err:  # noqa: BLE001
-                _LOGGER.warning("return_to_base failed: %s", err)
+                _LOGGER.warning("stop/return_to_base failed: %s", err)
 
 
     async def async_import_rooms(self, rooms: dict, mode: str = "merge") -> None:

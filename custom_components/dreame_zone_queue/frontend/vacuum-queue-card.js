@@ -73,6 +73,7 @@ class VacuumQueueCard extends HTMLElement {
     const fp = st ? st.last_updated + JSON.stringify(st.attributes.items) + st.state : "missing";
     if (fp === this._fp) return;
     this._fp = fp;
+    this._unbusy();
     const struct = st
       ? (st.attributes.items || []).map((i) => `${i.id}:${i.status}:${i.interrupted ? 1 : 0}:${i.reason || ""}`).join("|")
         + "#" + st.state
@@ -123,6 +124,29 @@ class VacuumQueueCard extends HTMLElement {
 
   _call(service, data = {}) {
     this._hass.callService("dreame_zone_queue", service, data);
+    // akcje kolejki: natychmiastowy feedback — przyciski gasna do czasu
+    // aktualizacji stanu (albo timeoutu awaryjnego), zero podwojnych klikniec
+    if (["start", "pause", "skip", "stop", "clear", "dock"].includes(service))
+      this._markBusy();
+  }
+  _markBusy() {
+    const root = this.shadowRoot;
+    if (!root) return;
+    root.querySelectorAll(".actions .btn").forEach((b) => {
+      b.disabled = true;
+      b.classList.add("busy");
+    });
+    clearTimeout(this._busyT);
+    this._busyT = setTimeout(() => this._unbusy(), 5000);
+  }
+  _unbusy() {
+    clearTimeout(this._busyT);
+    const root = this.shadowRoot;
+    if (!root) return;
+    root.querySelectorAll(".actions .btn.busy").forEach((b) => {
+      b.disabled = false;
+      b.classList.remove("busy");
+    });
   }
 
   // Pelny _render podmienia caly DOM karty — przegladarka traci kotwice
@@ -331,6 +355,8 @@ class VacuumQueueCard extends HTMLElement {
         .btn.warn { background: none; border: 1px solid var(--error-color, #d32f2f);
                     color: var(--error-color, #d32f2f); }
         .btn:disabled { opacity: .4; cursor: default; }
+        .btn.busy { opacity: .55; pointer-events: none; }
+        .btn.busy::after { content: " ⏳"; }
 
         /* ================= tryb wąski (< 520 px) ================= */
         :host(.narrow) thead { display: none; }
@@ -449,16 +475,21 @@ class VacuumQueueCard extends HTMLElement {
         ${c.show_actions && !ro ? `<div class="sec">
           <div class="sechd">Sterowanie</div>
           <div class="actions">
-          ${st.state === "running"
-            ? `<button class="btn primary" id="pause" title="Robot dokończy bieżący pokój">\u23F8 Pauza</button>
-               <button class="btn" id="skip">\u23ED Pomiń</button>
-               <button class="btn warn twoclick" id="stop">\u23F9 Stop</button>`
-            : st.state === "paused"
-            ? `<button class="btn primary" id="start">\u25B6 Kontynuuj</button>
-               <button class="btn" id="skip">\u23ED Pomiń</button>
-               <button class="btn warn twoclick" id="stop">\u23F9 Stop</button>`
-            : `<button class="btn primary" id="start">\u25B6 Start</button>
-               <button class="btn warn twoclick" id="clear">\u2715 Wyczyść</button>`}
+          ${(() => {
+            const hasActive = items.some((it2) => it2.status === "active");
+            if (st.state === "running") return `
+               <button class="btn primary" id="pause" title="Robot doko\u0144czy bie\u017C\u0105cy pok\u00F3j">\u23F8 Pauza</button>
+               ${hasActive ? `<button class="btn" id="skip">\u23ED Pomi\u0144</button>` : ""}
+               <button class="btn warn twoclick" id="stop">\u23F9 Stop</button>`;
+            if (st.state === "paused") return `
+               <button class="btn primary" id="start">\u25B6 Kontynuuj</button>
+               ${hasActive ? `<button class="btn" id="skip">\u23ED Pomi\u0144</button>
+               <button class="btn" id="dock" title="Robot wraca do stacji; pok\u00F3j wr\u00F3ci do oczekuj\u0105cych">\u{1F3E0} Do bazy</button>` : ""}
+               <button class="btn warn twoclick" id="clear">\u2715 Wyczy\u015B\u0107</button>`;
+            return `
+               <button class="btn primary" id="start">\u25B6 Start</button>
+               <button class="btn warn twoclick" id="clear">\u2715 Wyczy\u015B\u0107</button>`;
+          })()}
           </div>
         </div>` : ""}
         ${c.show_add_row && !ro ? `<div class="sec">
@@ -522,6 +553,7 @@ class VacuumQueueCard extends HTMLElement {
     on("start", () => this._call("start"));
     on("pause", () => this._call("pause"));
     on("skip", () => this._call("skip"));
+    on("dock", () => this._call("dock"));
     arm("stop", () => this._call("stop"));
     arm("clear", () => this._call("clear"));
     on("add", () => this._call("add", { room: root.getElementById("addRoom").value }));

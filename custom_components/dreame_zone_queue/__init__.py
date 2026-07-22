@@ -163,6 +163,7 @@ def _register_services(hass: HomeAssistant) -> None:
     hass.services.async_register(DOMAIN, SERVICE_CLEAR, wrap("async_clear"))
 
     hass.services.async_register(DOMAIN, "stop", wrap("async_stop"))
+    hass.services.async_register(DOMAIN, "dock", wrap("async_dock"))
     hass.services.async_register(
         DOMAIN, SERVICE_NOTE, wrap("async_note"),
         vol.Schema({vol.Required("text"): cv.string}),
