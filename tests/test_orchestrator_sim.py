@@ -475,6 +475,98 @@ async def test_finish_room_defers_and_updates_reason():
     assert m.paused_reason == "pokój dokończony — kolejka wstrzymana"
 
 
+async def test_area_cancel_on_home_press():
+    """Domek na robocie: task 'completed' przy ulamku strefy = anulowano."""
+    hass, m = mk()
+    await m.async_setup()
+    await m.async_add("Salon")  # 4 m² bbox
+    await m.async_add("Kuchnia")
+    hass.states[VAC] = st("docked", **TASK_DONE)
+    await m.async_start()
+    send(m, st("cleaning", **CLEANING),
+         st("returning", cleaned_area=0, **TASK_DONE))
+    await drain()
+    assert m.queue[0]["status"] == "pending" and not m.running
+    assert "zatrzymano na robocie" in m.paused_reason
+    assert len(zone_calls(hass)) == 1  # nie wysyla nastepnego
+
+
+async def test_area_done_when_zone_mostly_cleaned():
+    hass, m = mk()
+    await m.async_setup()
+    await m.async_add("Salon")
+    hass.states[VAC] = st("docked", **TASK_DONE)
+    await m.async_start()
+    send(m, st("cleaning", **CLEANING),
+         st("returning", cleaned_area=3, **TASK_DONE))  # 3 z 4 m²
+    await drain()
+    assert m.queue[0]["status"] == "done"
+
+
+async def test_dispatch_blocked_while_room_active():
+    """Wyscig skip/watchdog nie moze wyslac drugiego pokoju naraz."""
+    hass, m = mk()
+    await m.async_setup()
+    await m.async_add("Salon")
+    await m.async_add("Kuchnia")
+    hass.states[VAC] = st("docked", **TASK_DONE)
+    await m.async_start()
+    assert m.queue[0]["status"] == "active"
+    await m._dispatch_next()  # zabladzony drugi dispatch (timer/watchdog)
+    assert len(zone_calls(hass)) == 1
+    assert m.queue[1]["status"] == "pending"
+
+
+async def test_returning_does_not_clear_interrupted():
+    """Powrot do bazy (running=True) nie jest 'wznowil sprzatanie'."""
+    hass, m = mk()
+    await m.async_setup()
+    await m.async_add("Salon")
+    hass.states[VAC] = st("docked", **TASK_DONE)
+    await m.async_start()
+    item = m.queue[0]
+    paused = dict(running=False, paused=True, zone_cleaning=True, started=True)
+    send(m, st("cleaning", **CLEANING), st("paused", **paused))
+    assert item["interrupted"]
+    going_home = dict(running=True, returning=True, zone_cleaning=True,
+                      started=True)
+    send(m, st("paused", **paused), st("returning", **going_home))
+    assert item["interrupted"]  # flaga zostaje az do rozstrzygniecia
+
+
+async def test_pause_retry_when_command_lost():
+    hass, m = mk()
+    await m.async_setup()
+    await m.async_add("Salon")
+    hass.states[VAC] = st("cleaning", **CLEANING)
+    await m.async_start()
+    await m.async_pause()
+    # robot zignorowal pauze — wciaz sprzata przy weryfikacji po 10 s
+    hass.states[VAC] = st("cleaning", **CLEANING)
+    await fire_timers(hass)
+    pauses = [c for c in hass.services.calls if c[1] == "pause"]
+    assert len(pauses) == 2  # oryginal + ponowka
+
+
+async def test_wash_wait_drying_dispatches_immediately():
+    hass, m = mk({const.CONF_WAIT_WASH: True})
+    await m.async_setup()
+    await m.async_add("Salon")
+    await m.async_add("Kuchnia")
+    hass.states[VAC] = st("docked", **TASK_DONE)
+    await m.async_start()
+    # pokoj z mopem konczy sie, gdy stacja juz suszy (mycie skonczone)
+    send(m, st("cleaning", **CLEANING),
+         st("docked", drying=True, **TASK_DONE))
+    await drain()
+    assert m.queue[0]["status"] == "done" and m._wait_wash is not None
+    send(m, st("docked", drying=True, **TASK_DONE),
+         st("docked", drying=True, charging=True, **TASK_DONE))
+    await drain()
+    await fire_timers(hass)  # delay-between-zones
+    assert len(zone_calls(hass)) == 2  # Kuchnia bez 3-min timeoutu
+
+
 SCENARIOS = [v for k, v in sorted(globals().items()) if k.startswith("test_")]
 
 

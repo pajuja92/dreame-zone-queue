@@ -4,6 +4,53 @@ Wszystkie istotne zmiany w projekcie. Format oparty o
 [Keep a Changelog](https://keepachangelog.com/pl/1.1.0/),
 wersjonowanie zgodne z [SemVer](https://semver.org/lang/pl/).
 
+## [2.0.0-beta.8] - 2026-07-23
+
+Poprawki 4 błędów wykrytych w analizie dziennika feedbacku z testów na
+robocie (22–23.07).
+
+### Naprawione
+- **Domek/Stop na robocie nie kończy już pokoju jako „done"**: firmware
+  L10 Prime nie emituje eventu anulowania, więc przerwane zadanie
+  wyglądało jak ukończone — kolejka wysyłała następny pokój, a robot
+  zawracał w pół drogi do bazy. Teraz „completed" przy sprzątniętym
+  <40% powierzchni strefy jest traktowane jako anulowanie: pokój wraca
+  do oczekujących, kolejka się wstrzymuje (realne zakończenia to 57–82%
+  powierzchni, anulowania 0–4% — progi z danych z robota).
+- **„Pomiń" nie wysyła już dwóch pokoi naraz**: wyścig timera ze skipa
+  z watchdogiem potrafił wysłać dwa kolejne pokoje (dwa zadania
+  „w trakcie" na liście, złe przypisanie pokoju, fałszywe „done" po
+  155 s). Dispatch jest teraz blokowany, gdy jakiś pokój wciąż jest
+  aktywny, a zawisły timer kasowany.
+- **Pauza ponawiana, gdy robot ją zignoruje**: komenda `vacuum.pause`
+  potrafi zginąć bez błędu (robot sprzątał dalej 3 min). Po 10 s stan
+  jest weryfikowany i pauza wysyłana ponownie (jedna ponowka).
+- **Powrót do bazy nie kasuje flagi przerwania**: robot raportuje
+  `running=True` w drodze do doku, co było odczytywane jako „wznowił
+  sprzątanie" — przez to 2h pauzy wliczyło się do czasu pokoju, a guard
+  porzucenia zadania nie zadziałał. Guardy porzucenia i anulowania są
+  teraz centralne dla wszystkich ścieżek „done".
+- **Czekanie na mycie mopa nie kończy się już zawsze 3-min timeoutem**:
+  suszenie mopa (trwa godzinami, można je bezpiecznie przerwać) było
+  traktowane jako trwające mycie — następny pokój rusza od razu po
+  zakończeniu mycia.
+
+### Zmienione
+- Powód przerwania podczas dojazdu do doku to teraz „wraca do bazy"
+  (zamiast mylącego „przerwane"); taki dojazd nie wyklucza już pokoju
+  ze statystyk czasu (ETA wreszcie ma z czego się uczyć — dotąd każde
+  normalne zakończenie przechodziło przez dojazd i statystyki nie
+  zapisywały się nigdy).
+- Restart/przeładowanie integracji zostawia wpis `RESTART` w dzienniku
+  feedbacku (z listą pokoi cofniętych do oczekujących) — dotąd restart
+  był niewidoczny i „znikający" aktywny pokój wyglądał jak błąd.
+
+### Testy
+- 6 nowych scenariuszy symulacyjnych (25 łącznie): anulowanie po
+  powierzchni, done przy sprzątniętej strefie, blokada podwójnego
+  dispatchu, powrót do bazy a flaga przerwania, ponowka pauzy,
+  dispatch przy suszeniu.
+
 ## [2.0.0-beta.7] - 2026-07-23
 
 ### Zmienione
