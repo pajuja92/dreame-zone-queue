@@ -24,8 +24,12 @@ const robotLine = (st, vacObj) => {
   let line = "robot: " + (T_STATE[vs] || vs);
   const batt = vacObj && (vacObj.attributes.battery ?? vacObj.attributes.battery_level);
   if (batt != null && batt !== "") line += ` · \u{1F50B} ${batt}%`;
-  if (st.state === "paused")
+  if (st.state === "paused") {
     line += ` · ⏸ ${st.attributes.paused_reason || "kolejka wstrzymana — naciśnij Kontynuuj"}`;
+    const hasActive = (st.attributes.items || []).some((i) => i.status === "active");
+    if (hasActive && vacObj && vacObj.attributes.running)
+      line += " (robot dokończy bieżący pokój)";
+  }
   return line;
 };
 
@@ -161,7 +165,7 @@ class VacuumQueueCard extends HTMLElement {
     this._hass.callService("dreame_zone_queue", service, data);
     // akcje kolejki: natychmiastowy feedback — przyciski gasna do czasu
     // aktualizacji stanu (albo timeoutu awaryjnego), zero podwojnych klikniec
-    if (["start", "pause", "skip", "stop", "clear", "dock"].includes(service))
+    if (["start", "pause", "skip", "stop", "clear", "dock", "finish_room"].includes(service))
       this._markBusy();
   }
   _markBusy() {
@@ -182,6 +186,59 @@ class VacuumQueueCard extends HTMLElement {
       b.disabled = false;
       b.classList.remove("busy");
     });
+  }
+
+  // Modal notatki zyje w document.body (poza shadow DOM) — re-render karty
+  // w trakcie pisania nie moze go zniszczyc.
+  _noteDialog() {
+    if (document.querySelector(".dzq-note-modal")) return;
+    const wrap = document.createElement("div");
+    wrap.className = "dzq-note-modal";
+    wrap.style.cssText =
+      "position:fixed;inset:0;z-index:9999;background:rgba(0,0,0,.55);" +
+      "display:flex;align-items:center;justify-content:center;padding:16px;";
+    const box = document.createElement("div");
+    box.style.cssText =
+      "background:var(--card-background-color,#1c1c1e);color:var(--primary-text-color,#fff);" +
+      "border-radius:16px;padding:20px;width:min(480px,100%);box-shadow:0 12px 40px rgba(0,0,0,.5);";
+    box.innerHTML =
+      `<h3 style="margin:0 0 10px;font-size:1.05em">\u{1F4DD} Notatka do dziennika feedbacku</h3>
+       <textarea rows="5" placeholder="Co się właśnie stało? (zapiszę to razem z pełnym stanem robota i kolejki)"
+         style="width:100%;box-sizing:border-box;resize:vertical;font:inherit;padding:10px;
+         border-radius:10px;border:1px solid var(--divider-color,#444);
+         background:var(--primary-background-color,#111);color:inherit"></textarea>
+       <div style="display:flex;justify-content:flex-end;gap:8px;margin-top:14px">
+         <button data-x="cancel" style="font:inherit;padding:9px 16px;border-radius:10px;border:none;cursor:pointer;
+           background:var(--secondary-background-color,#333);color:inherit">Anuluj</button>
+         <button data-x="save" style="font:inherit;font-weight:600;padding:9px 16px;border-radius:10px;border:none;cursor:pointer;
+           background:var(--primary-color,#03a9f4);color:#fff">Zapisz</button>
+       </div>`;
+    wrap.appendChild(box);
+    document.body.appendChild(wrap);
+    const ta = box.querySelector("textarea");
+    ta.focus();
+    const close = () => wrap.remove();
+    wrap.addEventListener("click", (e) => { if (e.target === wrap) close(); });
+    box.querySelector('[data-x="cancel"]').onclick = close;
+    box.querySelector('[data-x="save"]').onclick = () => {
+      const t = ta.value.trim();
+      if (!t) { ta.focus(); return; }
+      this._hass.callService("dreame_zone_queue", "note", { text: t });
+      close();
+      this._toast("✓ Notatka zapisana w dzienniku feedbacku");
+    };
+  }
+  _toast(msg) {
+    document.querySelectorAll(".dzq-toast").forEach((t) => t.remove());
+    const el = document.createElement("div");
+    el.className = "dzq-toast";
+    el.textContent = msg;
+    el.style.cssText =
+      "position:fixed;left:50%;bottom:32px;transform:translateX(-50%);z-index:9999;" +
+      "background:var(--primary-color,#03a9f4);color:#fff;padding:12px 20px;" +
+      "border-radius:999px;font-weight:600;box-shadow:0 6px 24px rgba(0,0,0,.4);";
+    document.body.appendChild(el);
+    setTimeout(() => el.remove(), 2500);
   }
 
   // Pelny _render podmienia caly DOM karty — przegladarka traci kotwice
@@ -517,8 +574,9 @@ class VacuumQueueCard extends HTMLElement {
           ${(() => {
             const hasActive = items.some((it2) => it2.status === "active");
             if (st.state === "running") return `
-               <button class="btn primary" id="pause" title="Robot doko\u0144czy bie\u017C\u0105cy pok\u00F3j">\u23F8 Pauza</button>
-               ${hasActive ? `<button class="btn" id="skip">\u23ED Pomi\u0144</button>` : ""}
+               <button class="btn primary" id="pause" title="Robot zatrzymuje si\u0119 natychmiast w miejscu">\u23F8 Pauza</button>
+               ${hasActive ? `<button class="btn" id="finish" title="Robot doko\u0144czy bie\u017C\u0105cy pok\u00F3j, kolejka si\u0119 wstrzyma">\u{1F3C1} Doko\u0144cz pok\u00F3j</button>
+               <button class="btn" id="skip">\u23ED Pomi\u0144</button>` : ""}
                <button class="btn warn twoclick" id="stop">\u23F9 Stop</button>`;
             if (st.state === "paused") return `
                <button class="btn primary" id="start">\u25B6 Kontynuuj</button>
@@ -585,14 +643,12 @@ class VacuumQueueCard extends HTMLElement {
         fn();
       };
     };
-    on("noteBtn", () => {
-      const t = prompt("Notatka do dziennika feedbacku — co się właśnie stało?");
-      if (t && t.trim()) this._call("note", { text: t.trim() });
-    });
+    on("noteBtn", () => this._noteDialog());
     on("start", () => this._call("start"));
     on("pause", () => this._call("pause"));
     on("skip", () => this._call("skip"));
     on("dock", () => this._call("dock"));
+    on("finish", () => this._call("finish_room"));
     arm("stop", () => this._call("stop"));
     arm("clear", () => this._call("clear"));
     on("add", () => this._call("add", { room: root.getElementById("addRoom").value }));

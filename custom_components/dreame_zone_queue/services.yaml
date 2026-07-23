@@ -185,3 +185,9 @@ dock:
   description: >-
     Odsyła robota do stacji bez kończenia sesji — aktywny pokój wraca do
     oczekujących, kolejkę można później wznowić przyciskiem Kontynuuj.
+
+finish_room:
+  name: Finish current room
+  description: >-
+    Robot dokańcza bieżący pokój, a kolejka nie wysyła następnego
+    (dawne zachowanie przycisku Pauza). Wznowienie przyciskiem Kontynuuj.

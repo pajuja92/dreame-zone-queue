@@ -4,6 +4,30 @@ Wszystkie istotne zmiany w projekcie. Format oparty o
 [Keep a Changelog](https://keepachangelog.com/pl/1.1.0/),
 wersjonowanie zgodne z [SemVer](https://semver.org/lang/pl/).
 
+## [2.0.0-beta.7] - 2026-07-23
+
+### Zmienione
+- **„⏸ Pauza" zatrzymuje robota natychmiast** (w miejscu, `vacuum.pause`) —
+  robot czeka na decyzję: Kontynuuj / Do bazy. Uwaga: firmware porzuca tak
+  wstrzymane zadanie po ~30 min (kolejka ostrzeże po 25 min).
+- **Nowy przycisk „🏁 Dokończ pokój"** przejął dawne zachowanie Pauzy:
+  robot dokańcza bieżący pokój, kolejka nie wysyła następnego. Dostępny
+  też jako serwis `dreame_zone_queue.finish_room` i encja przycisku.
+
+### Dodane
+- **Panel „Zone Queue Logi" w menu bocznym HA** (jak File editor / Terminal):
+  podgląd dziennika feedbacku bez logów HA Core — filtr, auto-odświeżanie
+  co 5 s, kolorowanie wpisów NOTE/DECISION, przycisk pobrania pliku.
+  Endpoint: `/api/dreame_zone_queue/feedback_log` (wymaga logowania,
+  tylko admin).
+- **Nowe okno notatki**: wieloliniowe pole tekstowe zamiast okienka
+  przeglądarki, przyciski Zapisz/Anuluj, a po zapisie potwierdzenie
+  („✓ Notatka zapisana"). Okno przeżywa odświeżenia karty w trakcie
+  pisania.
+- Linia stanu przy pauzie z aktywnym pokojem dopowiada
+  „(robot dokończy bieżący pokój)" — odpowiedź na zgłoszenie z feedbacku,
+  że „pauza nic nie robi".
+
 ## [2.0.0-beta.6] - 2026-07-23
 
 ### Dodane

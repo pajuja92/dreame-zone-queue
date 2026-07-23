@@ -448,6 +448,33 @@ async def test_clear_with_active_while_paused_stops_robot():
     assert not m.queue
 
 
+async def test_pause_is_immediate():
+    hass, m = mk()
+    await m.async_setup()
+    await m.async_add("Salon")
+    hass.states[VAC] = st("docked", **TASK_DONE)
+    await m.async_start()
+    await m.async_pause()
+    assert ("vacuum", "pause") in [(c[0], c[1]) for c in hass.services.calls]
+    assert not m.running and "stoi w miejscu" in m.paused_reason
+
+
+async def test_finish_room_defers_and_updates_reason():
+    hass, m = mk()
+    await m.async_setup()
+    await m.async_add("Salon")
+    hass.states[VAC] = st("docked", **TASK_DONE)
+    await m.async_start()
+    before = len(hass.services.calls)
+    await m.async_finish_room()
+    assert not any(c[1] == "pause" for c in hass.services.calls[before:])
+    assert not m.running
+    send(m, st("cleaning", **CLEANING), st("docked", **TASK_DONE))
+    await drain()
+    assert m.queue[0]["status"] == "done"
+    assert m.paused_reason == "pokój dokończony — kolejka wstrzymana"
+
+
 SCENARIOS = [v for k, v in sorted(globals().items()) if k.startswith("test_")]
 
 

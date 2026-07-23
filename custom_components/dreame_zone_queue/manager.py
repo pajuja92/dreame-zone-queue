@@ -540,9 +540,29 @@ class QueueManager:
             _LOGGER.warning("return_to_base failed: %s", err)
 
     async def async_pause(self) -> None:
+        """Natychmiastowa pauza: robot staje w miejscu i czeka na decyzję
+        (Kontynuuj / Do bazy). Zadanie strefy zostaje w pamięci robota."""
         _LOGGER.warning("DZQ_ACTION | PAUSE")
         self.running = False
-        self.paused_reason = "wstrzymana ręcznie"
+        self.paused_reason = "wstrzymana — robot stoi w miejscu"
+        self._wait_wash = None
+        if self._unsub_timer:
+            self._unsub_timer()
+            self._unsub_timer = None
+        self._notify()
+        try:
+            await self.hass.services.async_call(
+                "vacuum", "pause", {"entity_id": self.vacuum_entity},
+                blocking=True,
+            )
+        except Exception as err:  # noqa: BLE001
+            _LOGGER.warning("vacuum.pause failed: %s", err)
+
+    async def async_finish_room(self) -> None:
+        """Robot dokończy bieżący pokój; kolejka nie wyśle następnego."""
+        _LOGGER.warning("DZQ_ACTION | FINISH_ROOM")
+        self.running = False
+        self.paused_reason = "dokończy bieżący pokój i się zatrzyma"
         self._wait_wash = None
         if self._unsub_timer:
             self._unsub_timer()
@@ -993,6 +1013,8 @@ class QueueManager:
         self._last_done = (item["id"], time.monotonic())
         _LOGGER.warning("DZQ_DECISION | %s | room=%s state=%s duration=%.0fs",
                         why, item["room"], state_str, duration)
+        if not self.running and self.paused_reason and "dokończy" in self.paused_reason:
+            self.paused_reason = "pokój dokończony — kolejka wstrzymana"
         self._notify()
         if not self.running:
             return

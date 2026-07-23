@@ -23,6 +23,7 @@ from .const import (
     ATTR_WATER,
     CARD_FILENAME,
     DOMAIN,
+    FEEDBACK_LOG,
     SERVICE_ADD,
     SERVICE_CLEAR,
     SERVICE_MOVE,
@@ -65,6 +66,63 @@ SCHEMA_SET = SCHEMA_ITEM.extend(
         vol.Optional(ATTR_REPEATS): vol.Coerce(int),
     }
 )
+
+
+def _feedback_view_cls():
+    """GET /api/dreame_zone_queue/feedback_log — ogon dziennika feedbacku."""
+    from homeassistant.components.http import HomeAssistantView
+
+    class _View(HomeAssistantView):
+        url = "/api/dreame_zone_queue/feedback_log"
+        name = "api:dreame_zone_queue:feedback_log"
+        requires_auth = True
+
+        async def get(self, request):
+            hass = request.app["hass"]
+            path = hass.config.path(FEEDBACK_LOG)
+
+            def _read() -> str:
+                try:
+                    with open(path, encoding="utf-8") as f:
+                        return "".join(f.readlines()[-2000:])
+                except FileNotFoundError:
+                    return ""
+
+            text = await hass.async_add_executor_job(_read)
+            manager = _get_manager(hass)
+            return self.json({
+                "log": text,
+                "path": path,
+                "enabled": bool(manager and manager.feedback),
+            })
+
+    return _View
+
+
+async def _register_feedback_panel(hass: HomeAssistant) -> None:
+    """Osobna pozycja w menu bocznym z podgladem dziennika feedbacku."""
+    if hass.data[DOMAIN].get("_panel_registered"):
+        return
+    hass.http.register_view(_feedback_view_cls()())
+    try:
+        from homeassistant.components import frontend
+
+        frontend.async_register_built_in_panel(
+            hass,
+            component_name="custom",
+            sidebar_title="Zone Queue Logi",
+            sidebar_icon="mdi:script-text-outline",
+            frontend_url_path="dzq-feedback",
+            config={"_panel_custom": {
+                "name": "dzq-feedback-panel",
+                "module_url": f"{URL_BASE}/dzq-feedback-panel.js?v={VERSION}",
+                "embed_iframe": False,
+            }},
+            require_admin=True,
+        )
+        hass.data[DOMAIN]["_panel_registered"] = True
+    except Exception as err:  # noqa: BLE001
+        _LOGGER.warning("Could not register the feedback panel: %s", err)
 
 
 def _get_manager(hass: HomeAssistant) -> QueueManager | None:
@@ -121,6 +179,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     hass.data.setdefault(DOMAIN, {})[entry.entry_id] = manager
 
     await _register_frontend(hass)
+    await _register_feedback_panel(hass)
     await hass.config_entries.async_forward_entry_setups(entry, PLATFORMS)
     entry.async_on_unload(entry.add_update_listener(_update_listener))
 
@@ -164,6 +223,7 @@ def _register_services(hass: HomeAssistant) -> None:
 
     hass.services.async_register(DOMAIN, "stop", wrap("async_stop"))
     hass.services.async_register(DOMAIN, "dock", wrap("async_dock"))
+    hass.services.async_register(DOMAIN, "finish_room", wrap("async_finish_room"))
     hass.services.async_register(
         DOMAIN, SERVICE_NOTE, wrap("async_note"),
         vol.Schema({vol.Required("text"): cv.string}),

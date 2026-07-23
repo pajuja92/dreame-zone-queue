@@ -11,7 +11,8 @@ from .manager import QueueManager
 
 BUTTONS = (
     ("start", "Start queue", "mdi:play", "async_start"),
-    ("pause", "Pause queue", "mdi:pause", "async_pause"),
+    ("pause", "Pause now", "mdi:pause", "async_pause"),
+    ("finish", "Finish current room", "mdi:flag-checkered", "async_finish_room"),
     ("skip", "Skip current room", "mdi:skip-next", "async_skip"),
     ("stop", "Stop queue", "mdi:stop", "async_stop"),
     ("clear", "Clear queue", "mdi:playlist-remove", "async_clear"),
