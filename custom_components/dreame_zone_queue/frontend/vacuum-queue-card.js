@@ -18,6 +18,32 @@ const T_WATER = { off: "wy\u0142.", slightly_dry: "lekko suchy",
 const estTxt = (it) =>
   it && it.est_s != null ? `~${Math.max(1, Math.round(it.est_s / 60))} min` : "";
 
+// linia "robot: ..." — stan + bateria + powód postoju kolejki
+const robotLine = (st, vacObj) => {
+  const vs = vacObj ? vacObj.state : "?";
+  let line = "robot: " + (T_STATE[vs] || vs);
+  const batt = vacObj && (vacObj.attributes.battery ?? vacObj.attributes.battery_level);
+  if (batt != null && batt !== "") line += ` · \u{1F50B} ${batt}%`;
+  if (st.state === "paused")
+    line += ` · ⏸ ${st.attributes.paused_reason || "kolejka wstrzymana — naciśnij Kontynuuj"}`;
+  return line;
+};
+
+// % ukończenia aktywnego pokoju: cleaned_area robota vs powierzchnia strefy
+const activePct = (items, vacObj) => {
+  const it = (items || []).find((i) => i.status === "active");
+  if (!it || !vacObj) return "";
+  const a = vacObj.attributes;
+  const cleaned = Number(a.cleaned_area);
+  if (!cleaned || !(a.zone_cleaning === true || a.running === true)) return "";
+  const z = it.zone || [0, 0, 0, 0];
+  const areaM2 =
+    (Math.abs((z[2] - z[0]) * (z[3] - z[1])) / 1e6) * Math.max(1, it.repeats || 1);
+  if (!areaM2) return "";
+  const pct = Math.min(99, Math.round((100 * cleaned) / areaM2));
+  return pct >= 1 ? `${pct}%` : "";
+};
+
 const T_STATE = { docked: "w doku", charging: "\u0142adowanie", cleaning: "sprz\u0105ta",
                   returning: "wraca do bazy", paused: "pauza", idle: "bezczynny",
                   error: "b\u0142\u0105d", unavailable: "niedost\u0119pny", sleeping: "u\u015Bpiony" };
@@ -70,7 +96,14 @@ class VacuumQueueCard extends HTMLElement {
   set hass(hass) {
     this._hass = hass;
     const st = hass.states[this._config.entity];
-    const fp = st ? st.last_updated + JSON.stringify(st.attributes.items) + st.state : "missing";
+    // fingerprint obejmuje tez encje odkurzacza — bateria, % pokoju i stan
+    // robota maja sie odswiezac na biezaco (przez _patch, bez przebudowy)
+    const vacEnt = st && st.attributes.vacuum_entity;
+    const vacObj = vacEnt ? hass.states[vacEnt] : null;
+    const fp = st
+      ? st.last_updated + JSON.stringify(st.attributes.items) + st.state
+        + (vacObj ? vacObj.last_updated : "")
+      : "missing";
     if (fp === this._fp) return;
     this._fp = fp;
     this._unbusy();
@@ -117,9 +150,11 @@ class VacuumQueueCard extends HTMLElement {
       e.textContent = estTxt(it);
     });
     const vac = st.attributes.vacuum_entity;
-    const vs = vac && this._hass.states[vac] ? this._hass.states[vac].state : "?";
+    const vacObj = vac ? this._hass.states[vac] : null;
     const sub = root.querySelector(".sub");
-    if (sub) sub.textContent = "robot: " + (T_STATE[vs] || vs);
+    if (sub) sub.textContent = robotLine(st, vacObj);
+    const pctEl = root.querySelector(".pct");
+    if (pctEl) pctEl.textContent = activePct(items, vacObj);
   }
 
   _call(service, data = {}) {
@@ -200,7 +235,7 @@ class VacuumQueueCard extends HTMLElement {
     const prog = st.attributes.progress || { done: 0, total: 0 };
     const etaS = st.attributes.eta_s;
     const vac = st.attributes.vacuum_entity;
-    const vacState = vac && this._hass.states[vac] ? this._hass.states[vac].state : "?";
+    const vacObj = vac ? this._hass.states[vac] : null;
 
     const sel = (opts, cur, cls, id, labels, suffix = "") =>
       `<select class="${cls}" data-id="${id}">` +
@@ -231,7 +266,7 @@ class VacuumQueueCard extends HTMLElement {
         <td class="st">${STATUS_ICON[it.status] || ""}</td>
         <td class="room">${selMode && pending
             ? `<input type="checkbox" class="pick" data-id="${it.id}" ${this._sel.has(it.id) ? "checked" : ""}>`
-            : ""}<span class="rst">${STATUS_ICON[it.status] || ""} </span>${ric(it.room, it.icon)}${it.room}<span class="est" data-id="${it.id}">${estTxt(it)}</span>
+            : ""}<span class="rst">${STATUS_ICON[it.status] || ""} </span>${ric(it.room, it.icon)}${it.room}<span class="est" data-id="${it.id}">${estTxt(it)}</span>${active ? `<span class="pct">${activePct(items, vacObj)}</span>` : ""}
           ${active ? (it.interrupted
               ? `<span class="now intr">⏸ ${it.reason || "przerwane"}</span>`
               : '<span class="now">sprząta teraz</span>') : ""}</td>
@@ -260,12 +295,12 @@ class VacuumQueueCard extends HTMLElement {
         .badge.paused { background: var(--warning-color, #ff9800); color: #fff; }
         .sub { color: var(--secondary-text-color); font-size: .84em; margin-bottom: 10px; }
 
-        table { width: 100%; border-collapse: collapse; font-size: ${c.compact ? ".84em" : ".92em"}; }
-        th { text-align: left; font-size: .72em; font-weight: 600;
+        table { width: 100%; border-collapse: collapse; font-size: ${c.compact ? ".92em" : "1em"}; }
+        th { text-align: left; font-size: .74em; font-weight: 600;
              text-transform: uppercase; letter-spacing: .06em;
              color: var(--secondary-text-color);
              border-bottom: 1px solid var(--divider-color); padding: 4px 6px 6px; }
-        td { padding: ${c.compact ? "4px" : "6px"};
+        td { padding: ${c.compact ? "5px 6px" : "7px 8px"};
              border-bottom: 1px solid var(--divider-color); vertical-align: middle; }
         tbody tr:hover { background: color-mix(in srgb, var(--primary-text-color) 4%, transparent); }
         tr.active { background: color-mix(in srgb, var(--primary-color) 12%, transparent); font-weight: 600; }
@@ -326,6 +361,9 @@ class VacuumQueueCard extends HTMLElement {
         .est { margin-left: 8px; font-size: .78em; font-weight: 400;
                color: var(--secondary-text-color); white-space: nowrap; }
         .est:empty { display: none; }
+        .pct { margin-left: 8px; font-size: .78em; font-weight: 700;
+               color: var(--primary-color); white-space: nowrap; }
+        .pct:empty { display: none; }
         .bulk select { flex: 1; min-width: 90px; padding: 6px 8px; border-radius: 8px;
                        background: var(--card-background-color); color: var(--primary-text-color);
                        border: 1px solid var(--divider-color); }
@@ -414,6 +452,7 @@ class VacuumQueueCard extends HTMLElement {
         :host(.narrow) .seg { flex-basis: 100%; }
         :host(.narrow) .seg button { flex: 1; padding: 10px 12px; font-size: 14px; }
         :host(.narrow) .est { font-size: 12px; }
+        :host(.narrow) .pct { font-size: 12px; }
         :host(.narrow) tr.dragover td { border-top: none; }
         :host(.narrow) .addrow select, :host(.narrow) .addrow .btn { height: 44px; border-radius: 12px; }
         :host(.narrow) .actions { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
@@ -462,7 +501,7 @@ class VacuumQueueCard extends HTMLElement {
               ? `<button class="ib notebtn" id="noteBtn" title="Zapisz notatkę do dziennika feedbacku">\u{1F4DD}</button>`
               : ""}<span class="badge ${st.state}">${{ running: "PRACUJE", paused: "WSTRZYMANA", idle: "BEZCZYNNA" }[st.state] || st.state}</span></span>
         </h2>` : ""}
-        ${c.show_robot_state ? `<div class="sub">robot: ${T_STATE[vacState] || vacState}</div>` : ""}
+        ${c.show_robot_state ? `<div class="sub">${robotLine(st, vacObj)}</div>` : ""}
         ${c.show_progress && prog.total > 0 ? `<div class="prog">
           <div class="pbar"><div class="pfill" style="width:${Math.round(100 * prog.done / prog.total)}%"></div></div>
           <span class="ptxt">${prog.done}/${prog.total} pokoi${etaS ? ` \u00B7 ~${Math.max(1, Math.round(etaS / 60))} min` : ""}</span>

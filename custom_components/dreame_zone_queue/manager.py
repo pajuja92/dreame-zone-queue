@@ -73,6 +73,8 @@ class QueueManager:
         # (item_id, monotonic) of the most recent "done" — cancel events
         # arriving right after may revert it (robot stopped by the user)
         self._last_done: tuple[int | None, float] = (None, 0.0)
+        # dlaczego kolejka stoi — pokazywane na karcie przy stanie "paused"
+        self.paused_reason: str | None = None
         # feedback mode: full state dumps + user notes into a dedicated log
         self.feedback: bool = False
         self._fb_logger = logging.getLogger(FEEDBACK_LOGGER)
@@ -142,6 +144,9 @@ class QueueManager:
             await self.hass.async_add_executor_job(self._fb_attach)
         # After a restart the robot state is unknown -> never resume blindly.
         self.running = False
+        if any(i["status"] in (STATUS_ACTIVE, STATUS_DONE, STATUS_SKIPPED)
+               for i in self.queue):
+            self.paused_reason = "restart Home Assistant"
         for item in self.queue:
             if item.get("status") == STATUS_ACTIVE:
                 item["status"] = STATUS_PENDING
@@ -450,6 +455,7 @@ class QueueManager:
             # kontynuacja: aktywny pokoj wciaz "w grze" — pogodz stan kolejki
             # z FAKTYCZNYM stanem robota zamiast slepo czekac na event
             self.running = True
+            self.paused_reason = None
             self._wait_wash = None
             self._notify()
             self._schedule_watchdog()
@@ -482,12 +488,14 @@ class QueueManager:
             _LOGGER.info("Queue start requested but no pending items")
             return
         self.running = True
+        self.paused_reason = None
         await self._dispatch_next()
 
     async def async_stop(self) -> None:
         """End the session: stop the robot, send it home, keep the list."""
         _LOGGER.warning("DZQ_ACTION | STOP")
         self.running = False
+        self.paused_reason = "zakończona przyciskiem Stop"
         self._wait_wash = None
         self._expect_stop_until = time.monotonic() + 15
         active = self._active()
@@ -510,6 +518,7 @@ class QueueManager:
         goes back to pending, the queue pauses and can be continued later."""
         _LOGGER.warning("DZQ_ACTION | DOCK")
         self.running = False
+        self.paused_reason = "robot odesłany do bazy"
         self._wait_wash = None
         if self._unsub_timer:
             self._unsub_timer()
@@ -533,6 +542,7 @@ class QueueManager:
     async def async_pause(self) -> None:
         _LOGGER.warning("DZQ_ACTION | PAUSE")
         self.running = False
+        self.paused_reason = "wstrzymana ręcznie"
         self._wait_wash = None
         if self._unsub_timer:
             self._unsub_timer()
@@ -564,6 +574,7 @@ class QueueManager:
         had_active = self._active() is not None
         was_running = self.running
         self.running = False
+        self.paused_reason = None
         self._wait_wash = None
         self._expect_stop_until = time.monotonic() + 15
         self.queue.clear()
@@ -758,6 +769,7 @@ class QueueManager:
         _LOGGER.warning("DZQ_ACTION | DISPATCH_NEXT | next_room=%s pending=%s", nxt.get("room") if nxt else None, sum(1 for i in self.queue if i["status"] == STATUS_PENDING))
         if nxt is None:
             self.running = False
+            self.paused_reason = None
             self._notify()
             _LOGGER.info("Queue finished — sending the robot back to the dock")
             try:
@@ -789,6 +801,7 @@ class QueueManager:
             _LOGGER.error("Room '%s': suction and mop both off — skipping", nxt["room"])
             nxt["status"] = STATUS_ERROR
             self.running = False
+            self.paused_reason = "błąd: ssanie i mop wyłączone"
             self._notify()
             return
         data: dict[str, Any] = {
@@ -830,6 +843,7 @@ class QueueManager:
             _LOGGER.error("Failed to start zone for '%s': %s", nxt["room"], err)
             nxt["status"] = STATUS_ERROR
             self.running = False
+            self.paused_reason = "błąd wysyłki strefy do robota"
             self._notify()
             self._user_notify(
                 f"Nie udało się wysłać strefy „{nxt['room']}”: {err}. "
@@ -996,6 +1010,7 @@ class QueueManager:
             self._unsub_timer()
             self._unsub_timer = None
         self.running = False
+        self.paused_reason = reason
         self._wait_wash = None
         item["status"] = STATUS_PENDING
         for key in ("interrupted", "reason", "started_at", "seen_running",
@@ -1136,6 +1151,7 @@ class QueueManager:
             elif item.get("redispatched"):
                 item["status"] = STATUS_ERROR
                 self.running = False
+                self.paused_reason = "robot dwukrotnie nie podjął strefy"
                 self._notify()
                 self._user_notify(
                     f"Pokój „{item['room']}”: robot dwukrotnie nie podjął "
@@ -1353,4 +1369,5 @@ class QueueManager:
             "count_pending": sum(1 for i in self.queue if i["status"] == STATUS_PENDING),
             "vacuum_entity": self.vacuum_entity,
             "feedback": self.feedback,
+            "paused_reason": self.paused_reason if state == "paused" else None,
         }

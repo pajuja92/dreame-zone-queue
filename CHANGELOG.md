@@ -4,6 +4,25 @@ Wszystkie istotne zmiany w projekcie. Format oparty o
 [Keep a Changelog](https://keepachangelog.com/pl/1.1.0/),
 wersjonowanie zgodne z [SemVer](https://semver.org/lang/pl/).
 
+## [2.0.0-beta.6] - 2026-07-23
+
+### Dodane
+- **Bateria robota** (🔋 %) w linii stanu robota na karcie.
+- **% ukończenia aktywnego pokoju** przy jego wierszu — liczony z
+  `cleaned_area` robota względem powierzchni strefy (× powtórzenia);
+  szacunkowy (nakładki tras mogą go lekko zawyżać), ograniczony do 99%.
+- **Powód postoju kolejki** w linii stanu, gdy kolejka jest wstrzymana:
+  „wstrzymana ręcznie", „zakończona przyciskiem Stop", „zatrzymano na
+  robocie", „robot odesłany do bazy", „restart Home Assistant", błędy
+  wysyłki strefy itd. (nowy atrybut sensora `paused_reason`).
+- Linia stanu robota, bateria i % pokoju odświeżają się na żywo przy
+  każdej zmianie encji odkurzacza (nie tylko przy zmianach kolejki).
+
+### Zmienione
+- **Większa czcionka tabeli na szerokich ekranach**: 1em (tryb kompaktowy
+  0.92em) zamiast 0.92/0.84em + luźniejsze odstępy wierszy. Widok mobilny
+  (wąski) bez zmian.
+
 ## [2.0.0-beta.5] - 2026-07-22
 
 ### Naprawione
