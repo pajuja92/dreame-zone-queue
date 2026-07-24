@@ -4,6 +4,18 @@ Wszystkie istotne zmiany w projekcie. Format oparty o
 [Keep a Changelog](https://keepachangelog.com/pl/1.1.0/),
 wersjonowanie zgodne z [SemVer](https://semver.org/lang/pl/).
 
+## [2.0.0-beta.14] - 2026-07-24
+
+### Dodane
+- **Kolumna „Uwagi" w historii** (karta statystyk + modal 🕒 z karty
+  kolejki): misje poboczne robota podczas przebiegu z czasem trwania
+  każdej, np. „ładowanie (42 min), mycie mopa (3 min), błąd: brush
+  stuck (1 min)". Epizody są mierzone od przerwania do wznowienia,
+  kolejne o tym samym powodzie scalane, szum <10 s i końcowy dojazd do
+  bazy pomijane. Widoczna też dla trwającego sprzątania (na żywo).
+  W widoku ogólnym karty statystyk dostępna opcjonalna kolumna
+  „Uwagi (ostatnie)".
+
 ## [2.0.0-beta.13] - 2026-07-24
 
 ### Dodane

@@ -292,11 +292,14 @@ class VacuumQueueCard extends HTMLElement {
           <td>${T_WATER[r.water] || r.water || "\u2014"}</td>
           <td style="color:${OUTC[r.outcome] || "inherit"}">${OUT[r.outcome] || r.outcome}</td>
           <td>${r.returns || 0}</td>
+          <td>${((r.events || []).map((e) =>
+            `${e.reason} (${e.dur < 60 ? e.dur + " s" : fmtMin(e.dur)})`)
+            .join(", ")) || "\u2014"}</td>
         </tr>`;
       }).join("");
       body.innerHTML =
         `<table style="width:100%;border-collapse:collapse;font-size:.9em">
-          <tr>${["Data", "Godz.", "%", "Czas", "Ssanie", "Mop", "Wynik", "Powroty"]
+          <tr>${["Data", "Godz.", "%", "Czas", "Ssanie", "Mop", "Wynik", "Powroty", "Uwagi"]
             .map((h) => `<th style="text-align:left;font-size:.78em;text-transform:uppercase;color:var(--secondary-text-color);padding:4px 8px;border-bottom:1px solid var(--divider-color,#444)">${h}</th>`).join("")}</tr>
           ${rows}
         </table>

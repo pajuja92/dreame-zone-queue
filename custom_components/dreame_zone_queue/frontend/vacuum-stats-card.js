@@ -35,6 +35,7 @@ const OVERVIEW_COLS = {
   runs:    { label: "Sprzątań",       val: (s) => s.n || "—" },
   success: { label: "Sukces",         val: (s) => s.n ? Math.round(100 * s.ok / s.n) + "%" : "—" },
   returns: { label: "Powroty (śr.)",  val: (s) => s.n ? (s.retSum / s.n).toFixed(1) : "—" },
+  notes:   { label: "Uwagi (ostatnie)", val: (s) => s.last ? fmtEvents(s.last) : "—" },
 };
 const DEFAULT_OVERVIEW = ["last", "dur", "pct", "suction", "water"];
 
@@ -49,9 +50,10 @@ const DETAIL_COLS = {
   outcome: { label: "Wynik",    val: (r) => OUTCOME_PL[r.outcome] || r.outcome },
   returns: { label: "Powroty do bazy", val: (r) => r.returns ?? 0 },
   repeats: { label: "Przejazdy", val: (r) => r.repeats || 1 },
+  notes:   { label: "Uwagi",    val: (r) => fmtEvents(r) },
 };
 const DEFAULT_DETAIL = ["date", "time", "pct", "dur", "suction", "water",
-  "outcome", "returns"];
+  "outcome", "returns", "notes"];
 
 const MODE_FILTERS = [
   ["all", "Wszystkie"],
@@ -75,6 +77,14 @@ function fmtMin(sec) {
   if (sec == null) return "—";
   const min = Math.round(sec / 60);
   return min >= 60 ? `${Math.floor(min / 60)} h ${min % 60} min` : `${min} min`;
+}
+function fmtDur(sec) {
+  return sec < 60 ? `${sec} s` : fmtMin(sec);
+}
+function fmtEvents(r) {
+  const ev = (r && r.events) || [];
+  if (!ev.length) return "—";
+  return ev.map((e) => `${e.reason} (${fmtDur(e.dur)})`).join(", ");
 }
 
 class VacuumStatsCard extends HTMLElement {

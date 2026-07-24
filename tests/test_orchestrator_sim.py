@@ -751,6 +751,27 @@ async def test_dispatch_failure_reverts_room_to_pending():
     assert m.queue[0]["status"] == "active" and m.queue[0]["room"] == "Salon"
 
 
+async def test_history_records_side_events_with_duration():
+    hass, m = mk()
+    await m.async_setup()
+    await m.async_add("Salon")
+    hass.states[VAC] = st("docked", **TASK_DONE)
+    await m.async_start()
+    item = m.queue[0]
+    # misja poboczna: wyjazd do mycia mopa trwajacy ~2 min
+    send(m, st("cleaning", **CLEANING), st("returning", **WASH_MID))
+    assert item["events"][-1]["reason"] == "jedzie myć mopa"
+    item["events"][-1]["since"] -= 120
+    send(m, st("returning", **WASH_MID), st("cleaning", **CLEANING))
+    assert item["events"][-1]["end"] is not None  # RESUMED zamyka epizod
+    send(m, st("cleaning", **CLEANING),
+         st("returning", cleaned_area=3, **TASK_DONE))
+    await drain()
+    ev = m.history["Salon"][-1]["events"]
+    assert len(ev) == 1 and ev[0]["reason"] == "jedzie myć mopa"
+    assert 115 <= ev[0]["dur"] <= 125
+
+
 async def test_current_run_reflects_active_room():
     hass, m = mk()
     await m.async_setup()

@@ -586,7 +586,7 @@ class QueueManager:
             item["status"] = STATUS_PENDING
             for key in ("interrupted", "reason", "started_at", "seen_running",
                         "interrupted_since", "stall_warned", "redispatched",
-                        "dock_returns"):
+                        "dock_returns", "events"):
                 item.pop(key, None)
         self._notify()
         try:
@@ -912,7 +912,8 @@ class QueueManager:
         # (NOT "redispatched" — it caps the watchdog's lost-command retry
         # and must survive the retry dispatch itself)
         for key in ("interrupted", "was_interrupted", "interrupted_since",
-                    "reason", "seen_running", "stall_warned", "dock_returns"):
+                    "reason", "seen_running", "stall_warned", "dock_returns",
+                    "events"):
             nxt.pop(key, None)
         self._dispatched_at = time.monotonic()
         self._wait_wash = None
@@ -1143,6 +1144,9 @@ class QueueManager:
                       "ładowanie", "opróżnianie kurzu"):
             # przerwy serwisowe w doku — "ile powrotow do bazy" w historii
             item["dock_returns"] = item.get("dock_returns", 0) + 1
+        # epizod poboczny do kolumny "Uwagi" w historii (zamykany po RESUMED)
+        item.setdefault("events", []).append(
+            {"reason": reason, "since": time.time()})
         item["interrupted_since"] = time.time()
         item["reason"] = reason
         _LOGGER.warning("DZQ_DECISION | INTERRUPTED | room=%s reason=%s",
@@ -1152,6 +1156,29 @@ class QueueManager:
                 f"Pokój „{item['room']}”: {reason}. Kolejka czeka."
             )
         self._notify()
+
+    @staticmethod
+    def _close_event(item: dict) -> None:
+        """Zamknij trwajacy epizod poboczny (przy wznowieniu sprzatania)."""
+        evs = item.get("events")
+        if evs and evs[-1].get("end") is None:
+            evs[-1]["end"] = time.time()
+
+    @staticmethod
+    def _events_summary(item: dict) -> list:
+        """Epizody poboczne przebiegu: [{reason, dur}] — scalone kolejne
+        o tym samym powodzie, bez szumu (<10 s) i bez koncowego dojazdu."""
+        out = []
+        for e in item.get("events", []):
+            dur = round((e.get("end") or time.time()) - e["since"])
+            reason = e["reason"]
+            if reason == "wraca do bazy" or dur < 10:
+                continue
+            if out and out[-1]["reason"] == reason:
+                out[-1]["dur"] += dur
+            else:
+                out.append({"reason": reason, "dur": dur})
+        return out
 
     def _record_run(self, item: dict, outcome: str) -> None:
         """Wpis do historii pokoju (karta statystyk). Zapis na dysk robi
@@ -1184,6 +1211,7 @@ class QueueManager:
                      else "sweeping_and_mopping"),
             "outcome": outcome,
             "returns": item.get("dock_returns", 0),
+            "events": self._events_summary(item),
         })
         del runs[:-HISTORY_MAX_RUNS]
 
@@ -1225,6 +1253,7 @@ class QueueManager:
                      else "sweeping_and_mopping"),
             "outcome": "active",
             "returns": item.get("dock_returns", 0),
+            "events": self._events_summary(item),
         }
 
     def _after_finish_dispatch(self, item: dict) -> None:
@@ -1309,7 +1338,7 @@ class QueueManager:
         item["status"] = STATUS_PENDING
         for key in ("interrupted", "reason", "started_at", "seen_running",
                     "interrupted_since", "stall_warned", "redispatched",
-                    "dock_returns"):
+                    "dock_returns", "events"):
             item.pop(key, None)
         _LOGGER.warning("DZQ_DECISION | CANCELLED | room=%s reason=%s",
                         item["room"], reason)
@@ -1406,6 +1435,7 @@ class QueueManager:
                 item["interrupted"] = False
                 for key in ("reason", "interrupted_since", "stall_warned"):
                     item.pop(key, None)
+                self._close_event(item)
                 _LOGGER.warning("DZQ_DECISION | RESUMED (watchdog) | room=%s",
                                 item["room"])
                 self._notify()
@@ -1464,7 +1494,8 @@ class QueueManager:
                 item["status"] = STATUS_PENDING
                 for key in ("restored", "interrupted", "reason", "started_at",
                             "seen_running", "interrupted_since",
-                            "stall_warned", "redispatched", "dock_returns"):
+                            "stall_warned", "redispatched", "dock_returns",
+                            "events"):
                     item.pop(key, None)
                 _LOGGER.warning("DZQ_DECISION | RESTORED_NO_TASK | room=%s — "
                                 "pokój wraca do oczekujących", item["room"])
@@ -1601,6 +1632,7 @@ class QueueManager:
             item["interrupted"] = False
             for key in ("reason", "interrupted_since", "stall_warned"):
                 item.pop(key, None)
+            self._close_event(item)
             _LOGGER.warning("DZQ_DECISION | RESUMED | room=%s — robot resumed cleaning, clearing interrupted", item["room"])
             self._notify()
             return
