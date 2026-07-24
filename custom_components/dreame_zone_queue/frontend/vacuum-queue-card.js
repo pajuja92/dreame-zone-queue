@@ -262,16 +262,21 @@ class VacuumQueueCard extends HTMLElement {
     const body = box.querySelector(".hbody");
     try {
       const data = await this._hass.callApi("get", "dreame_zone_queue/history");
-      const runs = (((data || {}).history || {})[room] || []).slice().reverse();
+      const all = (((data || {}).history || {})[room] || []).slice();
+      const cur = (data || {}).current;
+      if (cur && cur.room === room) all.push(cur); // trwajace sprzatanie na zywo
+      const runs = all.reverse();
       if (!runs.length) {
         body.innerHTML = "Brak zapisanej historii dla tego pokoju \u2014 " +
           "zbiera si\u0119 od wersji 2.0.0-beta.9 przy ka\u017cdym sprz\u0105taniu.";
         return;
       }
       const OUT = { done: "\u2713 sukces", cancelled: "\u2715 anulowane",
-        skipped: "\u23ED pomini\u0119te", error: "\u26A0 b\u0142\u0105d" };
+        skipped: "\u23ED pomini\u0119te", error: "\u26A0 b\u0142\u0105d",
+        active: "\u25B6 w trakcie" };
       const OUTC = { done: "var(--success-color,#0a2)", cancelled: "var(--error-color,#d33)",
-        skipped: "var(--secondary-text-color)", error: "var(--error-color,#d33)" };
+        skipped: "var(--secondary-text-color)", error: "var(--error-color,#d33)",
+        active: "var(--primary-color,#03a9f4)" };
       const fmtMin = (sec) => {
         const min = Math.round((sec || 0) / 60);
         return min >= 60 ? `${Math.floor(min / 60)} h ${min % 60} min` : `${min} min`;

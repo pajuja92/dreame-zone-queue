@@ -751,6 +751,19 @@ async def test_dispatch_failure_reverts_room_to_pending():
     assert m.queue[0]["status"] == "active" and m.queue[0]["room"] == "Salon"
 
 
+async def test_current_run_reflects_active_room():
+    hass, m = mk()
+    await m.async_setup()
+    assert m.current_run() is None
+    await m.async_add("Salon")
+    hass.states[VAC] = st("docked", **TASK_DONE)
+    await m.async_start()
+    hass.states[VAC] = st("cleaning", cleaned_area=1, **CLEANING)
+    cur = m.current_run()
+    assert cur["room"] == "Salon" and cur["outcome"] == "active"
+    assert cur["pct"] == 25 and cur["mode"] == "sweeping_and_mopping"
+
+
 async def _restart(m):
     """Symulacja restartu HA: zapis Store -> nowy manager na nowym hass."""
     await m._save()

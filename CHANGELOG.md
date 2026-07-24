@@ -4,6 +4,15 @@ Wszystkie istotne zmiany w projekcie. Format oparty o
 [Keep a Changelog](https://keepachangelog.com/pl/1.1.0/),
 wersjonowanie zgodne z [SemVer](https://semver.org/lang/pl/).
 
+## [2.0.0-beta.13] - 2026-07-24
+
+### Dodane
+- **Trwające sprzątanie widoczne od razu w historii** — w obu widokach
+  (modal 🕒 z karty kolejki oraz karta statystyk): wpis „▶ w trakcie"
+  z aktualnym czasem, % strefy na żywo, trybami i licznikiem powrotów.
+  W widoku ogólnym karty statystyk kolumna „Ostatnio" pokazuje wtedy
+  bieżący przebieg. Endpoint `/history` zwraca pole `current`.
+
 ## [2.0.0-beta.12] - 2026-07-24
 
 ### Naprawione (log 24.07, sesja 11:15–12:28)

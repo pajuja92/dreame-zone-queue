@@ -146,6 +146,9 @@ def _history_view_cls():
             return self.json({
                 "history": manager.history,
                 "rooms": sorted(manager.rooms.keys()),
+                # trwajacy przebieg (outcome='active') — widoki historii
+                # pokazuja go od razu jako "w trakcie"
+                "current": manager.current_run(),
             })
 
     return _View

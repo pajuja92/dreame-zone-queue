@@ -1203,6 +1203,30 @@ class QueueManager:
             return None
         return max(0.0, cleaned / zone_m2)
 
+    def current_run(self) -> dict | None:
+        """Trwajacy przebieg aktywnego pokoju w formacie wpisu historii
+        (outcome='active') — do widokow historii, na zywo."""
+        item = self._active()
+        if item is None or not item.get("started_at"):
+            return None
+        ratio = self._area_ratio(item)
+        suction_off = item.get("suction") == "off"
+        water_off = item.get("water") == "off"
+        return {
+            "room": item["room"],
+            "ts": round(item["started_at"]),
+            "dur": round(time.time() - item["started_at"]),
+            "pct": None if ratio is None else min(100, round(ratio * 100)),
+            "suction": item.get("suction"),
+            "water": item.get("water"),
+            "repeats": item.get("repeats", 1),
+            "mode": ("sweeping" if water_off
+                     else "mopping" if suction_off
+                     else "sweeping_and_mopping"),
+            "outcome": "active",
+            "returns": item.get("dock_returns", 0),
+        }
+
     def _after_finish_dispatch(self, item: dict) -> None:
         """Wspolny ogon po zamknieciu pokoju: wash-wait albo kolejny."""
         if not self.running:

@@ -22,7 +22,7 @@ const WATER_PL = { off: "—", slightly_dry: "Lekko wilg.", moist: "Wilgotny",
 const MODE_PL = { sweeping: "Zamiatanie", mopping: "Mopowanie",
   sweeping_and_mopping: "Zamiat.+mop." };
 const OUTCOME_PL = { done: "✓ sukces", cancelled: "✗ anulowane",
-  skipped: "⏭ pominięte", error: "⚠ błąd" };
+  skipped: "⏭ pominięte", error: "⚠ błąd", active: "▶ w trakcie" };
 
 /* dostępne kolumny: klucz -> {label, val(fn)} */
 const OVERVIEW_COLS = {
@@ -116,6 +116,7 @@ class VacuumStatsCard extends HTMLElement {
       const data = await this._hass.callApi("get", "dreame_zone_queue/history");
       this._history = data.history || {};
       this._rooms = data.rooms || [];
+      this._current = data.current || null;
       this._error = null;
     } catch (e) {
       this._error = String(e);
@@ -142,6 +143,10 @@ class VacuumStatsCard extends HTMLElement {
 
   _runs(room) {
     let runs = (this._history && this._history[room]) || [];
+    // trwajacy przebieg widoczny od razu, oznaczony "w trakcie"
+    if (this._current && this._current.room === room) {
+      runs = [...runs, this._current];
+    }
     if (this._mode !== "all") runs = runs.filter((r) => r.mode === this._mode);
     return runs;
   }
@@ -232,6 +237,7 @@ class VacuumStatsCard extends HTMLElement {
         .out-done { color: var(--success-color, #0a2); }
         .out-cancelled, .out-error { color: var(--error-color, #d33); }
         .out-skipped { color: var(--secondary-text-color); }
+        .out-active { color: var(--primary-color); font-weight: 600; }
       </style>
       <ha-card>
         <div class="hdr">
