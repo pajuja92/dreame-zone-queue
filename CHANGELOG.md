@@ -4,6 +4,25 @@ Wszystkie istotne zmiany w projekcie. Format oparty o
 [Keep a Changelog](https://keepachangelog.com/pl/1.1.0/),
 wersjonowanie zgodne z [SemVer](https://semver.org/lang/pl/).
 
+## [2.0.0-beta.10] - 2026-07-24
+
+### Naprawione
+- **„Kontynuuj" nie pali już pokoi, gdy integracja Dreame nie działa**
+  (log 24.07 10:44: po restarcie HA dreame_vacuum się nie załadowało
+  i każde kliknięcie oznaczało kolejny pokój jako „błąd"):
+  - przed wysyłką sprawdzana jest dostępność usługi
+    `dreame_vacuum.vacuum_clean_zone` — gdy jej nie ma, kolejka pauzuje
+    z powodem „integracja dreame_vacuum niedostępna (po restarcie HA?)",
+    a pokój zostaje nietknięty w oczekujących;
+  - błąd wysyłki strefy nie oznacza już pokoju jako „błąd" — pokój
+    wraca do oczekujących i „Kontynuuj" ponawia TEN SAM pokój
+    (status „błąd" zostaje tylko dla „robot dwukrotnie nie podjął
+    strefy"); nieudana wysyłka nie trafia też do historii statystyk.
+
+### Testy
+- 2 nowe scenariusze (34 łącznie): brak usługi dreame_vacuum,
+  wyjątek przy wysyłce strefy.
+
 ## [2.0.0-beta.9] - 2026-07-24
 
 Poprawki z analizy drugiego dziennika feedbacku (sesja 24.07) +

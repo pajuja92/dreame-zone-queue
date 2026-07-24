@@ -91,6 +91,10 @@ class FakeBus:
 class FakeServices:
     def __init__(self):
         self.calls = []
+        self.available = True  # dreame_vacuum service present?
+
+    def has_service(self, domain, service):
+        return self.available
 
     async def async_call(self, domain, service, data, blocking=False):
         self.calls.append((domain, service, data))
@@ -696,6 +700,50 @@ async def test_history_records_cancel_skip_and_dock_returns():
     await m.async_skip()
     room = active["room"]
     assert m.history[room][-1]["outcome"] == "skipped"
+
+
+async def test_dispatch_service_missing_keeps_room_pending():
+    """dreame_vacuum niezaladowane po restarcie: pauza, pokoj nietkniety."""
+    hass, m = mk()
+    await m.async_setup()
+    await m.async_add("Salon")
+    await m.async_add("Kuchnia")
+    hass.states[VAC] = st("docked", **TASK_DONE)
+    hass.services.available = False
+    await m.async_start()
+    assert not m.running
+    assert "dreame_vacuum" in m.paused_reason
+    assert [i["status"] for i in m.queue] == ["pending", "pending"]
+    assert not zone_calls(hass)
+    # integracja wrocila -> Kontynuuj rusza od TEGO SAMEGO pokoju
+    hass.services.available = True
+    await m.async_start()
+    assert m.running and m.queue[0]["status"] == "active"
+    assert len(zone_calls(hass)) == 1
+
+
+async def test_dispatch_failure_reverts_room_to_pending():
+    hass, m = mk()
+    await m.async_setup()
+    await m.async_add("Salon")
+    await m.async_add("Kuchnia")
+    hass.states[VAC] = st("docked", **TASK_DONE)
+    orig = hass.services.async_call
+
+    async def failing(domain, service, data, blocking=False):
+        if service == "vacuum_clean_zone":
+            raise RuntimeError("Action dreame_vacuum.vacuum_clean_zone not found")
+        return await orig(domain, service, data, blocking)
+
+    hass.services.async_call = failing
+    await m.async_start()
+    assert not m.running and "błąd wysyłki" in m.paused_reason
+    assert [i["status"] for i in m.queue] == ["pending", "pending"]
+    assert "Salon" not in m.history  # nieudana wysylka nie zapisuje przebiegu
+    # usluga wraca -> ponawiamy ten sam pokoj
+    hass.services.async_call = orig
+    await m.async_start()
+    assert m.queue[0]["status"] == "active" and m.queue[0]["room"] == "Salon"
 
 
 SCENARIOS = [v for k, v in sorted(globals().items()) if k.startswith("test_")]

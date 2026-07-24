@@ -882,6 +882,22 @@ class QueueManager:
                 _LOGGER.warning("return_to_base after queue finish failed: %s", err)
             return
 
+        # po restarcie HA integracja dreame moze jeszcze nie byc zaladowana
+        # (log 24.07 10:44: kazde "Kontynuuj" paliło kolejny pokoj na ERROR)
+        # — pauza z czytelnym powodem, pokoj zostaje w oczekujacych
+        if not self.hass.services.has_service("dreame_vacuum", "vacuum_clean_zone"):
+            self.running = False
+            self.paused_reason = ("integracja dreame_vacuum niedostępna "
+                                  "(po restarcie HA?) — spróbuj za chwilę")
+            _LOGGER.warning("DZQ_DECISION | DISPATCH_UNAVAILABLE — brak "
+                            "usługi dreame_vacuum.vacuum_clean_zone")
+            self._notify()
+            self._user_notify(
+                "Nie mogę wysłać strefy: integracja dreame_vacuum nie jest "
+                "załadowana. Sprawdź integrację Dreame i kliknij Kontynuuj."
+            )
+            return
+
         nxt["status"] = STATUS_ACTIVE
         nxt["started_at"] = time.time()
         # reset per-run flags from any previous attempt
@@ -942,14 +958,16 @@ class QueueManager:
             )
         except Exception as err:  # noqa: BLE001
             _LOGGER.error("Failed to start zone for '%s': %s", nxt["room"], err)
-            self._record_run(nxt, "error")
-            nxt["status"] = STATUS_ERROR
+            # pokoj WRACA do oczekujacych — Kontynuuj ponowi TEN pokoj,
+            # zamiast palic kolejne na ERROR przy kazdym kliknieciu
+            nxt["status"] = STATUS_PENDING
+            nxt.pop("started_at", None)
             self.running = False
             self.paused_reason = "błąd wysyłki strefy do robota"
             self._notify()
             self._user_notify(
                 f"Nie udało się wysłać strefy „{nxt['room']}”: {err}. "
-                "Kolejka wstrzymana."
+                "Kolejka wstrzymana — Kontynuuj ponowi ten pokój."
             )
 
     @staticmethod
