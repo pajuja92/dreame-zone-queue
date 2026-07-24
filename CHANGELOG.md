@@ -4,6 +4,30 @@ Wszystkie istotne zmiany w projekcie. Format oparty o
 [Keep a Changelog](https://keepachangelog.com/pl/1.1.0/),
 wersjonowanie zgodne z [SemVer](https://semver.org/lang/pl/).
 
+## [2.0.0-beta.12] - 2026-07-24
+
+### Naprawione (log 24.07, sesja 11:15–12:28)
+- **Restart HA nie „osieroca" już trwającego sprzątania**: aktywny pokój
+  zostaje „w trakcie" po restarcie. Gdy robot nadal wykonuje zadanie
+  strefowe, kolejka przejmuje je z powrotem (RECLAIM): śledzi przerwy,
+  zapisze ukończenie z poprawnym czasem i pojedzie dalej. Gdy robot nie
+  ma już zadania — pokój wraca do oczekujących bez ponownego wysyłania
+  strefy „w ciemno". Dotąd: robot mopował Salon 45 min „bezpańsko",
+  a karta pokazywała pokój jako nietknięty.
+- **Guard na zduplikowane wywołania z karty**: identyczna akcja
+  w <400 ms jest ignorowana (w logu usunięcia pokoi wysyłały usługę
+  3–7× w kilka milisekund).
+
+### Dodane
+- **🕒 Historia sprzątania pokoju z karty kolejki**: nowy przycisk przy
+  każdym wierszu otwiera modal (nie modyfikuje karty) z pełną historią
+  pomieszczenia — data, godzina, % strefy, czas, ssanie, mop, wynik,
+  powroty do bazy. Dane z tej samej historii co karta statystyk.
+
+### Testy
+- 2 nowe scenariusze (36 łącznie): przejęcie zadania po restarcie,
+  restart bez zadania robota (powrót do oczekujących).
+
 ## [2.0.0-beta.11] - 2026-07-24
 
 ### Dodane — ustawienia wizualne karty statystyk

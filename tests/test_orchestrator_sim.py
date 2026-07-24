@@ -36,14 +36,18 @@ def _async_call_later(hass, delay, action):
 
 
 class FakeStore:
+    last = None  # wspoldzielone "na dysku" — resetowane w mk()
+
     def __init__(self, *a, **k):
         pass
 
     async def async_load(self):
-        return {}
+        import copy
+        return copy.deepcopy(FakeStore.last) if FakeStore.last else {}
 
     async def async_save(self, data):
-        pass
+        import copy
+        FakeStore.last = copy.deepcopy(data)
 
 
 _stub_module("homeassistant")
@@ -138,6 +142,7 @@ WASH_MID = dict(running=True, zone_cleaning=True, started=True,
 
 
 def mk(extra_opts=None):
+    FakeStore.last = None
     hass = FakeHass()
     entry = SimpleNamespace(
         data={const.CONF_VACUUM_ENTITY: VAC},
@@ -744,6 +749,55 @@ async def test_dispatch_failure_reverts_room_to_pending():
     hass.services.async_call = orig
     await m.async_start()
     assert m.queue[0]["status"] == "active" and m.queue[0]["room"] == "Salon"
+
+
+async def _restart(m):
+    """Symulacja restartu HA: zapis Store -> nowy manager na nowym hass."""
+    await m._save()
+    hass2 = FakeHass()
+    m2 = QueueManager(m.hass, m.entry).__class__(hass2, m.entry)
+    return hass2, m2
+
+
+async def test_restart_reclaims_running_room():
+    """Restart HA w trakcie: robot dalej mopuje -> kolejka przejmuje zadanie."""
+    hass, m = mk()
+    await m.async_setup()
+    await m.async_add("Salon")
+    await m.async_add("Kuchnia")
+    hass.states[VAC] = st("docked", **TASK_DONE)
+    await m.async_start()
+    hass2, m2 = await _restart(m)
+    hass2.states[VAC] = st("cleaning", **CLEANING)
+    await m2.async_setup()
+    # aktywny pokoj ZOSTAJE aktywny, kolejka wstrzymana do potwierdzenia
+    assert m2.queue[0]["status"] == "active" and not m2.running
+    # robot raportuje trwajace zadanie strefowe -> RECLAIM
+    send(m2, st("cleaning", **CLEANING), st("cleaning", **CLEANING))
+    assert m2.running and m2.paused_reason is None
+    # pokoj konczy sie normalnie -> done + nastepny z kolejki
+    send(m2, st("cleaning", **CLEANING),
+         st("returning", cleaned_area=3, **TASK_DONE))
+    await drain()
+    assert m2.queue[0]["status"] == "done"
+    await fire_timers(hass2)
+    assert len(zone_calls(hass2)) == 1  # Kuchnia wyslana po przejeciu
+
+
+async def test_restart_with_no_robot_task_reverts_to_pending():
+    """Restart HA, robot bez zadania -> pokoj do oczekujacych, bez redispatchu."""
+    hass, m = mk()
+    await m.async_setup()
+    await m.async_add("Salon")
+    hass.states[VAC] = st("docked", **TASK_DONE)
+    await m.async_start()
+    hass2, m2 = await _restart(m)
+    hass2.states[VAC] = st("docked", **TASK_DONE)
+    await m2.async_setup()
+    assert m2.queue[0]["status"] == "active"  # do rozstrzygniecia
+    await m2._async_reconcile()
+    assert m2.queue[0]["status"] == "pending" and not m2.running
+    assert not zone_calls(hass2)  # zero sprzatania w ciemno
 
 
 SCENARIOS = [v for k, v in sorted(globals().items()) if k.startswith("test_")]

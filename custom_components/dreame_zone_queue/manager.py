@@ -153,16 +153,24 @@ class QueueManager:
         if any(i["status"] in (STATUS_ACTIVE, STATUS_DONE, STATUS_SKIPPED)
                for i in self.queue):
             self.paused_reason = "restart Home Assistant"
-        reverted = []
+        # Aktywny pokoj ZOSTAJE aktywny — robot ma zadanie we wlasnej
+        # pamieci i restart HA go nie zatrzymuje (log 24.07 11:41: robot
+        # mopowal Salon 45 min "bezpansko"). Flaga restored: watchdog
+        # przejmie zadanie z powrotem, a gdy robot okaze sie bez zadania,
+        # cofnie pokoj do oczekujacych zamiast redispatchowac w ciemno.
+        kept = None
         for item in self.queue:
             if item.get("status") == STATUS_ACTIVE:
-                item["status"] = STATUS_PENDING
-                reverted.append(item["room"])
+                kept = item["room"]
+                item["restored"] = True
+                for key in ("seen_running", "redispatched", "stall_warned"):
+                    item.pop(key, None)
         # restart/reload musi byc widoczny w feedback logu — bez tego
         # znikajacy aktywny pokoj wyglada jak samoistny blad (log 23.07 10:52)
         self._fb("RESTART | integracja (prze)ładowana | items=%d | "
-                 "aktywny→pending: %s"
-                 % (len(self.queue), ", ".join(reverted) or "—"))
+                 "aktywny zachowany: %s" % (len(self.queue), kept or "—"))
+        if kept:
+            self._schedule_watchdog()
         if self.vacuum_entity:
             self._unsub_state = async_track_state_change_event(
                 self.hass, [self.vacuum_entity], self._on_vacuum_state
@@ -1035,6 +1043,22 @@ class QueueManager:
 
         return False
 
+    def _maybe_reclaim(self, item: dict, attrs: dict) -> None:
+        """Po restarcie HA robot nadal wykonuje nasza strefe -> przejmujemy
+        zadanie z powrotem (sledzenie przerw, DONE, dalsza kolejka)."""
+        if not item.get("restored"):
+            return
+        if not self._to_bool(attrs.get("zone_cleaning")):
+            return  # robot bez zadania — rozstrzygnie watchdog (task_gone)
+        item.pop("restored", None)
+        if not self.running and self.paused_reason == "restart Home Assistant":
+            self.running = True
+            self.paused_reason = None
+        _LOGGER.warning("DZQ_DECISION | RECLAIMED | room=%s — robot "
+                        "kontynuuje zadanie po restarcie HA", item["room"])
+        self._schedule_watchdog()
+        self._notify()
+
     def _foreign_task(self, attrs: dict) -> bool:
         """Robot wykonuje zadanie, ktore NIE jest nasza strefa — np. power
         na podniesionym robocie startuje pelne sprzatanie domu (log 24.07
@@ -1341,6 +1365,8 @@ class QueueManager:
         if time.monotonic() - self._dispatched_at < self.grace_s:
             return
 
+        self._maybe_reclaim(item, a)
+
         # power/aplikacja uruchomily INNE zadanie -> nie sledz go jako
         # naszego pokoju; pauza i czytelny powod
         if self._foreign_task(a):
@@ -1407,6 +1433,18 @@ class QueueManager:
             if self._abandoned(item):
                 await self._cancel_active(
                     item, "robot porzucił wstrzymane zadanie")
+                return
+            if item.get("restored") and not item.get("seen_running"):
+                # restart w trakcie, a robot nie ma juz zadania — nie wiemy,
+                # czy pokoj skonczony; wraca do oczekujacych BEZ redispatchu
+                item["status"] = STATUS_PENDING
+                for key in ("restored", "interrupted", "reason", "started_at",
+                            "seen_running", "interrupted_since",
+                            "stall_warned", "redispatched", "dock_returns"):
+                    item.pop(key, None)
+                _LOGGER.warning("DZQ_DECISION | RESTORED_NO_TASK | room=%s — "
+                                "pokój wraca do oczekujących", item["room"])
+                self._notify()
                 return
             if item.get("seen_running"):
                 self._finish_item(item, "DONE_WATCHDOG", st.state)
@@ -1520,6 +1558,8 @@ class QueueManager:
             return
         if time.monotonic() - self._dispatched_at < self.grace_s:
             return
+
+        self._maybe_reclaim(item, na)
 
         if self._task_running(new):
             item["seen_running"] = True

@@ -162,6 +162,12 @@ class VacuumQueueCard extends HTMLElement {
   }
 
   _call(service, data = {}) {
+    // guard: identyczne wywolanie w <400 ms = duplikat (log 24.07: bursty
+    // remove 3-7x w kilka ms) - wysylamy raz
+    const dedupKey = service + JSON.stringify(data);
+    const now = Date.now();
+    if (this._lastCall && this._lastCall.k === dedupKey && now - this._lastCall.t < 400) return;
+    this._lastCall = { k: dedupKey, t: now };
     this._hass.callService("dreame_zone_queue", service, data);
     // akcje kolejki: natychmiastowy feedback — przyciski gasna do czasu
     // aktualizacji stanu (albo timeoutu awaryjnego), zero podwojnych klikniec
@@ -227,6 +233,76 @@ class VacuumQueueCard extends HTMLElement {
       close();
       this._toast("✓ Notatka zapisana w dzienniku feedbacku");
     };
+  }
+  async _historyModal(room) {
+    if (document.querySelector(".dzq-hist-modal")) return;
+    const wrap = document.createElement("div");
+    wrap.className = "dzq-hist-modal";
+    wrap.style.cssText =
+      "position:fixed;inset:0;z-index:9999;background:rgba(0,0,0,.55);" +
+      "display:flex;align-items:center;justify-content:center;padding:16px;";
+    const box = document.createElement("div");
+    box.style.cssText =
+      "background:var(--card-background-color,#1c1c1e);color:var(--primary-text-color,#fff);" +
+      "border-radius:16px;padding:20px;width:min(680px,100%);max-height:85vh;" +
+      "display:flex;flex-direction:column;box-shadow:0 12px 40px rgba(0,0,0,.5);";
+    const esc = (t) => String(t).replace(/&/g, "&amp;").replace(/</g, "&lt;");
+    box.innerHTML =
+      `<h3 style="margin:0 0 10px;font-size:1.05em">\u{1F552} Historia sprz\u0105tania: ${esc(room)}</h3>
+       <div class="hbody" style="overflow:auto;min-height:60px">\u0141adowanie\u2026</div>
+       <div style="display:flex;justify-content:flex-end;margin-top:14px">
+         <button data-x="close" style="font:inherit;padding:9px 16px;border-radius:10px;border:none;cursor:pointer;
+           background:var(--secondary-background-color,#333);color:inherit">Zamknij</button>
+       </div>`;
+    wrap.appendChild(box);
+    document.body.appendChild(wrap);
+    const close = () => wrap.remove();
+    wrap.addEventListener("click", (e) => { if (e.target === wrap) close(); });
+    box.querySelector('[data-x="close"]').onclick = close;
+    const body = box.querySelector(".hbody");
+    try {
+      const data = await this._hass.callApi("get", "dreame_zone_queue/history");
+      const runs = (((data || {}).history || {})[room] || []).slice().reverse();
+      if (!runs.length) {
+        body.innerHTML = "Brak zapisanej historii dla tego pokoju \u2014 " +
+          "zbiera si\u0119 od wersji 2.0.0-beta.9 przy ka\u017cdym sprz\u0105taniu.";
+        return;
+      }
+      const OUT = { done: "\u2713 sukces", cancelled: "\u2715 anulowane",
+        skipped: "\u23ED pomini\u0119te", error: "\u26A0 b\u0142\u0105d" };
+      const OUTC = { done: "var(--success-color,#0a2)", cancelled: "var(--error-color,#d33)",
+        skipped: "var(--secondary-text-color)", error: "var(--error-color,#d33)" };
+      const fmtMin = (sec) => {
+        const min = Math.round((sec || 0) / 60);
+        return min >= 60 ? `${Math.floor(min / 60)} h ${min % 60} min` : `${min} min`;
+      };
+      const rows = runs.map((r) => {
+        const d = new Date(r.ts * 1000);
+        return `<tr>
+          <td>${d.toLocaleDateString("pl-PL", { day: "2-digit", month: "2-digit" })}</td>
+          <td>${d.toLocaleTimeString("pl-PL", { hour: "2-digit", minute: "2-digit" })}</td>
+          <td>${r.pct != null ? r.pct + "%" : "\u2014"}</td>
+          <td>${fmtMin(r.dur)}</td>
+          <td>${T_SUCTION[r.suction] || r.suction || "\u2014"}</td>
+          <td>${T_WATER[r.water] || r.water || "\u2014"}</td>
+          <td style="color:${OUTC[r.outcome] || "inherit"}">${OUT[r.outcome] || r.outcome}</td>
+          <td>${r.returns || 0}</td>
+        </tr>`;
+      }).join("");
+      body.innerHTML =
+        `<table style="width:100%;border-collapse:collapse;font-size:.9em">
+          <tr>${["Data", "Godz.", "%", "Czas", "Ssanie", "Mop", "Wynik", "Powroty"]
+            .map((h) => `<th style="text-align:left;font-size:.78em;text-transform:uppercase;color:var(--secondary-text-color);padding:4px 8px;border-bottom:1px solid var(--divider-color,#444)">${h}</th>`).join("")}</tr>
+          ${rows}
+        </table>
+        <div style="margin-top:8px;font-size:.8em;color:var(--secondary-text-color)">${runs.length} przebieg\u00f3w (max 100)</div>`;
+      body.querySelectorAll("td").forEach((td) => {
+        td.style.padding = "5px 8px";
+        td.style.borderBottom = "1px solid var(--divider-color,#333)";
+      });
+    } catch (e) {
+      body.textContent = "B\u0142\u0105d pobierania historii: " + e;
+    }
   }
   _toast(msg) {
     document.querySelectorAll(".dzq-toast").forEach((t) => t.remove());
@@ -309,9 +385,11 @@ class VacuumQueueCard extends HTMLElement {
           `<button class="ib down" data-id="${it.id}" title="Niżej">\u25BC</button>`
         : "";
       const gripBtn = `<span class="grip" title="Przeciągnij">\u2630</span>`;
-      const ctl = ro ? "" : pending
-        ? (c.grip_position === "buttons" ? gripBtn : "") + arrows + del
-        : del;
+      const hist = `<button class="ib hist" data-room="${it.room.replace(/"/g, "&quot;")}"
+                    title="Historia sprz\u0105tania">\u{1F552}</button>`;
+      const ctl = ro ? hist : pending
+        ? (c.grip_position === "buttons" ? gripBtn : "") + arrows + hist + del
+        : hist + del;
       const gripCell = `<td class="gripc">${pending && !ro && c.grip_position !== "buttons" ? gripBtn : ""}</td>`;
       const editable = !ro && (pending || active);
       const suctionOpts = SUCTION;
@@ -711,6 +789,9 @@ class VacuumQueueCard extends HTMLElement {
         }
         this._call("remove", { item_id: Number(b.dataset.id) });
       };
+    });
+    root.querySelectorAll(".hist").forEach((b) => {
+      b.onclick = () => this._historyModal(b.dataset.room);
     });
     root.querySelectorAll("select.suction").forEach((s) => {
       s.onchange = () => {
