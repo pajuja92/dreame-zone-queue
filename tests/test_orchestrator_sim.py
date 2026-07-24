@@ -484,11 +484,95 @@ async def test_area_cancel_on_home_press():
     hass.states[VAC] = st("docked", **TASK_DONE)
     await m.async_start()
     send(m, st("cleaning", **CLEANING),
-         st("returning", cleaned_area=0, **TASK_DONE))
+         st("returning", cleaned_area=1, **TASK_DONE))  # 25% strefy
     await drain()
     assert m.queue[0]["status"] == "pending" and not m.running
     assert "zatrzymano na robocie" in m.paused_reason
     assert len(zone_calls(hass)) == 1  # nie wysyla nastepnego
+
+
+async def test_unreachable_room_skipped_queue_continues():
+    """<5% strefy = zamkniete drzwi: pokoj pominiety, kolejka jedzie dalej."""
+    hass, m = mk()
+    await m.async_setup()
+    await m.async_add("Salon")
+    await m.async_add("Kuchnia")
+    hass.states[VAC] = st("docked", **TASK_DONE)
+    await m.async_start()
+    send(m, st("cleaning", **CLEANING),
+         st("returning", cleaned_area=0, **TASK_DONE))
+    await drain()
+    assert m.queue[0]["status"] == "skipped" and m.running
+    assert m.history["Salon"][-1]["outcome"] == "skipped"
+    assert any("zamknięte drzwi" in n for n in NOTIFICATIONS)
+    await fire_timers(hass)  # delay-between-zones
+    assert len(zone_calls(hass)) == 2  # Kuchnia poszla
+
+
+async def test_foreign_task_pauses_queue():
+    """Power na robocie = pelne sprzatanie domu, nie nasza strefa."""
+    hass, m = mk()
+    await m.async_setup()
+    await m.async_add("Salon")
+    hass.states[VAC] = st("docked", **TASK_DONE)
+    await m.async_start()
+    hass.states[VAC] = st("cleaning", running=True, started=True,
+                          zone_cleaning=False)
+    hass.states["sensor.l10_task_status"] = st("cleaning")
+    await m._async_reconcile()
+    await drain()
+    assert not m.running and m.queue[0]["status"] == "pending"
+    assert "inne zadanie" in m.paused_reason
+
+
+async def test_stall_warning_paused_in_dock_while_charging():
+    """Pauza w doku + ladowanie tez musi ostrzegac (zombie z logu 24.07)."""
+    hass, m = mk()
+    await m.async_setup()
+    await m.async_add("Salon")
+    hass.states[VAC] = st("docked", **TASK_DONE)
+    await m.async_start()
+    item = m.queue[0]
+    paused = st("paused", zone_cleaning=True, started=True, running=False,
+                paused=True, charging=True)
+    send(m, st("cleaning", **CLEANING), paused)
+    item["interrupted_since"] = __import__("time").time() - 26 * 60
+    hass.states[VAC] = paused
+    await m._async_reconcile()
+    assert item["stall_warned"]
+    assert any("Wznów" in n for n in NOTIFICATIONS)
+
+
+async def test_remove_active_while_robot_idle_pauses_queue():
+    """Usuwanie pokoi przy stojacym robocie nie moze go budzic."""
+    hass, m = mk()
+    await m.async_setup()
+    await m.async_add("Salon")
+    await m.async_add("Kuchnia")
+    hass.states[VAC] = st("docked", **TASK_DONE)
+    await m.async_start()
+    item_id = m.queue[0]["id"]
+    hass.states[VAC] = st("paused", zone_cleaning=True, started=True,
+                          running=False, paused=True, charging=True)
+    await m.async_remove(item_id=item_id)
+    assert not m.running and "usunięty" in m.paused_reason
+    await fire_timers(hass)
+    assert len(zone_calls(hass)) == 1  # zaden nowy pokoj nie poszedl
+
+
+async def test_remove_active_while_cleaning_moves_on():
+    hass, m = mk()
+    await m.async_setup()
+    await m.async_add("Salon")
+    await m.async_add("Kuchnia")
+    hass.states[VAC] = st("docked", **TASK_DONE)
+    await m.async_start()
+    item_id = m.queue[0]["id"]
+    hass.states[VAC] = st("cleaning", **CLEANING)
+    await m.async_remove(item_id=item_id)
+    assert m.running
+    await fire_timers(hass)  # dispatch za 4 s
+    assert len(zone_calls(hass)) == 2  # Kuchnia poszla
 
 
 async def test_area_done_when_zone_mostly_cleaned():
@@ -565,6 +649,53 @@ async def test_wash_wait_drying_dispatches_immediately():
     await drain()
     await fire_timers(hass)  # delay-between-zones
     assert len(zone_calls(hass)) == 2  # Kuchnia bez 3-min timeoutu
+
+
+async def test_history_records_done_run():
+    hass, m = mk()
+    await m.async_setup()
+    await m.async_add("Salon")  # zone 2000x2000 mm = 4 m²
+    hass.states[VAC] = st("docked", **TASK_DONE)
+    await m.async_start()
+    m.queue[0]["started_at"] -= 300
+    send(m, st("cleaning", **CLEANING),
+         st("returning", cleaned_area=3, **TASK_DONE))
+    await drain()
+    runs = m.history["Salon"]
+    assert len(runs) == 1
+    r = runs[0]
+    assert r["outcome"] == "done" and r["pct"] == 75
+    assert 295 <= r["dur"] <= 310
+    assert r["mode"] == "sweeping_and_mopping"  # standard + moist
+    assert r["suction"] == "standard" and r["water"] == "moist"
+
+
+async def test_history_records_cancel_skip_and_dock_returns():
+    hass, m = mk()
+    await m.async_setup()
+    await m.async_add("Salon")
+    await m.async_add("Kuchnia")
+    hass.states[VAC] = st("docked", **TASK_DONE)
+    await m.async_start()
+    # przerwa serwisowa (mycie mopa) -> licznik powrotow do bazy
+    send(m, st("cleaning", **CLEANING), st("returning", **WASH_MID))
+    assert m.queue[0]["dock_returns"] == 1
+    send(m, st("returning", **WASH_MID), st("cleaning", **CLEANING))
+    # anulowanie na robocie (1 z 4 m² = 25%)
+    send(m, st("cleaning", **CLEANING),
+         st("returning", cleaned_area=1, **TASK_DONE))
+    await drain()
+    runs = m.history["Salon"]
+    assert runs[-1]["outcome"] == "cancelled" and runs[-1]["returns"] == 1
+    assert runs[-1]["pct"] == 25
+    # skip aktywnego pokoju -> wpis "skipped"
+    await m.async_start()
+    await drain()
+    active = m._active()
+    assert active is not None
+    await m.async_skip()
+    room = active["room"]
+    assert m.history[room][-1]["outcome"] == "skipped"
 
 
 SCENARIOS = [v for k, v in sorted(globals().items()) if k.startswith("test_")]

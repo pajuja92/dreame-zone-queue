@@ -1,10 +1,11 @@
 """Constants for Dreame Zone Queue."""
 
 DOMAIN = "dreame_zone_queue"
-VERSION = "2.0.0-beta.8"
+VERSION = "2.0.0-beta.9"
 
 URL_BASE = "/dreame_zone_queue_files"
 CARD_FILENAME = "vacuum-queue-card.js"
+STATS_CARD_FILENAME = "vacuum-stats-card.js"
 
 # --- config / options keys ---
 CONF_VACUUM_ENTITY = "vacuum_entity"
@@ -33,6 +34,10 @@ WASH_WAIT_TIMEOUT_S = 180  # give up waiting for a between-rooms mop wash
 # "completed" with the zone barely touched = physical home/stop press
 # (L10 Prime never fires the cancel bus event); real finishes clean 57-82%
 CANCEL_AREA_RATIO = 0.4
+# <5% = robot did not really enter the zone (closed / ajar door):
+# skip the room and keep the queue going instead of pausing
+UNREACHABLE_AREA_RATIO = 0.05
+HISTORY_MAX_RUNS = 100  # per room, dla karty statystyk
 MIN_ZONE_MM = 120          # dreame rejects zones smaller than ~2 map grid cells
 
 SUCTION_LEVELS = ["off", "quiet", "standard", "strong", "turbo"]

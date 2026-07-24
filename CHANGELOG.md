@@ -4,6 +4,81 @@ Wszystkie istotne zmiany w projekcie. Format oparty o
 [Keep a Changelog](https://keepachangelog.com/pl/1.1.0/),
 wersjonowanie zgodne z [SemVer](https://semver.org/lang/pl/).
 
+## [2.0.0-beta.9] - 2026-07-24
+
+Poprawki z analizy drugiego dziennika feedbacku (sesja 24.07) +
+rozbudowa panelu logów i nowa karta statystyk.
+
+### Naprawione (log 24.07)
+- **Zamknięte drzwi ≠ anulowanie**: gdy robot wraca z „completed" przy
+  <5% sprzątniętej strefy (nie wjechał do pokoju — drzwi zamknięte lub
+  uchylone), pokój jest oznaczany jako **pominięty** z powiadomieniem,
+  a kolejka **jedzie dalej**. Zakres 5–39% pozostaje anulowaniem
+  („zatrzymano na robocie", pauza kolejki; komunikat podaje teraz %
+  strefy zamiast m²).
+- **Wykrywanie obcego zadania**: przycisk power na podniesionym robocie
+  startuje pełne sprzątanie domu (task_status `cleaning`, licznik
+  powierzchni od zera) — kolejka śledziła je jako swój pokój przez
+  10 minut. Watchdog wykrywa teraz zadanie spoza kolejki
+  (`segment/spot/cruising/cleaning` bez `zone_cleaning`) → pauza
+  z powodem „robot wykonuje inne zadanie".
+- **Ostrzeżenie o zastoju działa też w doku**: pauza podczas ładowania
+  nie wznowi się sama, a wyłączała alarm — 38-minutowa „zombie sesja"
+  z logu przeszła bez ostrzeżenia. Ładowanie nie wyłącza już alarmu
+  (nadal wyłączają: mycie, suszenie, auto-pauza niskiej baterii).
+- **Usuwanie pokoi nie budzi robota**: usunięcie aktywnego pokoju
+  wysyła następny tylko, gdy robot faktycznie sprząta; gdy stoi
+  (pauza/dok), kolejka przechodzi w pauzę z powodem „aktywny pokój
+  usunięty" — koniec z „robot się nagle obudził przy usuwaniu".
+
+### Dodane
+- **Widok Diff** (przełącznik Pełny/Diff): między kolejnymi zrzutami
+  `attrs` pokazywane są tylko zmienione klucze; pierwszy zrzut to pełna
+  baza. Klucze, które zniknęły, są odnotowane jako `"_removed": [...]`.
+  Na logu testowym: 1,6 MB → 182 KB (11% oryginału).
+- **„⬇ Pobierz diff"** — przetwarza CAŁY plik (nie tylko widoczny ogon)
+  i pobiera jako `dreame_zone_queue_feedback_diff.log`. Zwykłe
+  „⬇ Pobierz" również pobiera teraz cały plik.
+- **„🗄 Archiwizuj"** — bieżący dziennik (wraz z plikami rotacji)
+  przenosi się do `dreame_zone_queue_feedback_archived_<data>.log`
+  w /config, a główny plik zaczyna się od nowa; pierwszy nowy wpis jest
+  pełnym zrzutem (diff nie liczy się względem archiwum). Wymaga
+  uprawnień administratora, z potwierdzeniem.
+- **Filtr czasu** (od/do) i **filtr tagów** — klikane „chipy" z licznikami
+  dla TASK_SENSOR, DZQ_DIAG, DZQ_ACTION, DZQ_DECISION, NOTE, SNAPSHOT,
+  RESTART, INNE… (tagi wykrywane dynamicznie z pliku).
+- **Formatowanie JSON ze zwijaniem**: blok `attrs` jest domyślnie zwinięty
+  do podglądu (liczba kluczy + skrót), rozwija się w sformatowany,
+  pokolorowany JSON; przyciski „Rozwiń / Zwiń" dla wszystkich naraz.
+
+### Dodane — karta statystyk „Vacuum Stats Card"
+- **Historia sprzątań per pokój**: integracja zapisuje każdy przebieg
+  (data/godzina, czas trwania, % sprzątniętej strefy, tryb odkurzania
+  i mopowania, przejazdy, wynik: sukces / anulowane / pominięte / błąd,
+  liczba powrotów do bazy w trakcie — mycie mopa, ładowanie,
+  opróżnianie). Do 100 wpisów na pokój, trwałe w Store (przeżywa
+  restarty).
+- **Nowa osobna karta `custom:vacuum-stats-card`** (rejestruje się
+  automatycznie jako zasób Lovelace):
+  - widok ogólny — lista pokoi + kolumny: ostatnie sprzątanie, czas,
+    % strefy, najczęstszy tryb odkurzania/mopowania (opcjonalnie:
+    liczba sprzątań, % sukcesu, śr. czas, śr. powroty);
+  - klik w pokój → szczegóły wszystkich przebiegów (data, godzina, %,
+    czas, tryby, wynik, powroty do bazy, przejazdy);
+  - filtr trybu na obu widokach: Wszystkie / Zamiatanie / Mopowanie /
+    Zamiatanie+mopowanie;
+  - **wybór kolumn w ⚙ na karcie** (osobno dla widoku ogólnego
+    i szczegółów; zapis w przeglądarce) lub w YAML
+    (`columns` / `detail_columns`).
+
+### Techniczne
+- `GET /api/dreame_zone_queue/feedback_log?all=1` zwraca cały plik
+  (domyślnie ogon 2000 linii), nowe `POST …/feedback_archive`
+  i `GET …/history`.
+- 7 nowych scenariuszy symulacyjnych (32 łącznie): zapis historii,
+  zamknięte drzwi, obce zadanie, zastój w doku, usuwanie aktywnego
+  pokoju (robot stoi / sprząta).
+
 ## [2.0.0-beta.8] - 2026-07-23
 
 Poprawki 4 błędów wykrytych w analizie dziennika feedbacku z testów na

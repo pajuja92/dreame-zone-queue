@@ -22,6 +22,7 @@ from .const import (
     ATTR_SUCTION,
     ATTR_WATER,
     CARD_FILENAME,
+    STATS_CARD_FILENAME,
     DOMAIN,
     FEEDBACK_LOG,
     SERVICE_ADD,
@@ -80,11 +81,13 @@ def _feedback_view_cls():
         async def get(self, request):
             hass = request.app["hass"]
             path = hass.config.path(FEEDBACK_LOG)
+            want_all = request.query.get("all") == "1"
 
             def _read() -> str:
                 try:
                     with open(path, encoding="utf-8") as f:
-                        return "".join(f.readlines()[-2000:])
+                        lines = f.readlines()
+                    return "".join(lines if want_all else lines[-2000:])
                 except FileNotFoundError:
                     return ""
 
@@ -99,11 +102,62 @@ def _feedback_view_cls():
     return _View
 
 
+def _archive_view_cls():
+    """POST /api/dreame_zone_queue/feedback_archive — przenosi biezacy
+    dziennik do pliku *_archived_<data>* i zaczyna glowny plik od nowa."""
+    from homeassistant.components.http import HomeAssistantView
+
+    class _View(HomeAssistantView):
+        url = "/api/dreame_zone_queue/feedback_archive"
+        name = "api:dreame_zone_queue:feedback_archive"
+        requires_auth = True
+
+        async def post(self, request):
+            hass = request.app["hass"]
+            user = request.get("hass_user")
+            if user is not None and not user.is_admin:
+                return self.json({"error": "admin only"}, status_code=403)
+            manager = _get_manager(hass)
+            if manager is None:
+                return self.json({"error": "integration not loaded"},
+                                 status_code=404)
+            archived = await manager.async_archive_feedback()
+            return self.json({"archived": archived})
+
+    return _View
+
+
+def _history_view_cls():
+    """GET /api/dreame_zone_queue/history — historia przebiegow per pokoj
+    (dane dla karty statystyk vacuum-stats-card)."""
+    from homeassistant.components.http import HomeAssistantView
+
+    class _View(HomeAssistantView):
+        url = "/api/dreame_zone_queue/history"
+        name = "api:dreame_zone_queue:history"
+        requires_auth = True
+
+        async def get(self, request):
+            hass = request.app["hass"]
+            manager = _get_manager(hass)
+            if manager is None:
+                return self.json({"error": "integration not loaded"},
+                                 status_code=404)
+            return self.json({
+                "history": manager.history,
+                "rooms": sorted(manager.rooms.keys()),
+            })
+
+    return _View
+
+
 async def _register_feedback_panel(hass: HomeAssistant) -> None:
     """Osobna pozycja w menu bocznym z podgladem dziennika feedbacku."""
     if hass.data[DOMAIN].get("_panel_registered"):
         return
     hass.http.register_view(_feedback_view_cls()())
+    hass.http.register_view(_archive_view_cls()())
+    hass.http.register_view(_history_view_cls()())
     try:
         from homeassistant.components import frontend
 
@@ -147,7 +201,6 @@ async def _register_frontend(hass: HomeAssistant) -> None:
         hass.http.register_static_path(URL_BASE, str(card_dir), cache_headers=False)
     hass.data[DOMAIN]["_frontend_registered"] = True
 
-    url = f"{URL_BASE}/{CARD_FILENAME}?v={VERSION}"
     try:
         lovelace = hass.data.get("lovelace")
         resources = getattr(lovelace, "resources", None)
@@ -157,19 +210,25 @@ async def _register_frontend(hass: HomeAssistant) -> None:
             raise RuntimeError("lovelace resources unavailable")
         if not resources.loaded:
             await resources.async_load()
-        for item in resources.async_items():
-            if item.get("url", "").startswith(f"{URL_BASE}/{CARD_FILENAME}"):
-                if item["url"] != url and hasattr(resources, "async_update_item"):
-                    await resources.async_update_item(item["id"], {"url": url})
-                return
-        if hasattr(resources, "async_create_item"):
-            await resources.async_create_item({"res_type": "module", "url": url})
-            _LOGGER.info("Registered Lovelace resource %s", url)
+        for filename in (CARD_FILENAME, STATS_CARD_FILENAME):
+            url = f"{URL_BASE}/{filename}?v={VERSION}"
+            found = False
+            for item in resources.async_items():
+                if item.get("url", "").startswith(f"{URL_BASE}/{filename}"):
+                    found = True
+                    if item["url"] != url and hasattr(resources, "async_update_item"):
+                        await resources.async_update_item(item["id"], {"url": url})
+                    break
+            if not found and hasattr(resources, "async_create_item"):
+                await resources.async_create_item(
+                    {"res_type": "module", "url": url})
+                _LOGGER.info("Registered Lovelace resource %s", url)
     except Exception as err:  # noqa: BLE001
         _LOGGER.warning(
-            "Could not auto-register the Lovelace card resource (%s). "
-            "Add it manually: Settings > Dashboards > Resources > %s (module)",
-            err, url,
+            "Could not auto-register the Lovelace card resources (%s). "
+            "Add them manually: Settings > Dashboards > Resources > "
+            "%s/%s and %s/%s (module)",
+            err, URL_BASE, CARD_FILENAME, URL_BASE, STATS_CARD_FILENAME,
         )
 
 

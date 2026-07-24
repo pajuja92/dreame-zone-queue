@@ -28,6 +28,7 @@ from .const import (
     DEFAULT_FINISHED_STATES,
     DEFAULT_GRACE_S,
     FEEDBACK_LOG,
+    HISTORY_MAX_RUNS,
     FEEDBACK_LOGGER,
     SIGNAL_QUEUE_UPDATED,
     ABANDON_S,
@@ -40,6 +41,7 @@ from .const import (
     STORAGE_KEY,
     STORAGE_VERSION,
     SUCTION_TO_INT,
+    UNREACHABLE_AREA_RATIO,
     WASH_WAIT_TIMEOUT_S,
     WATCHDOG_S,
     WATER_TO_INT,
@@ -62,6 +64,8 @@ class QueueManager:
         self._revision: int = 0
         self.presets: dict[str, list] = {}
         self.stats: dict[str, dict] = {}
+        # historia przebiegów per pokoj (karta statystyk)
+        self.history: dict[str, list] = {}
         self._unsub_state: Callable | None = None
         self._unsub_timer: Callable | None = None
         self._unsub_task_sensor: Callable | None = None
@@ -139,6 +143,7 @@ class QueueManager:
         self._next_id = data.get("next_id", 1)
         self.presets = data.get("presets", {})
         self.stats = data.get("stats", {})
+        self.history = data.get("history", {})
         self.feedback = bool(data.get("feedback", False))
         if self.feedback:
             # RotatingFileHandler otwiera plik przy tworzeniu — poza petla
@@ -189,6 +194,7 @@ class QueueManager:
                 "next_id": self._next_id,
                 "presets": self.presets,
                 "stats": self.stats,
+                "history": self.history,
                 "feedback": self.feedback,
             }
         )
@@ -232,6 +238,31 @@ class QueueManager:
         """Feedback entry: dedicated file + HA log (own logger name)."""
         if self.feedback:
             self._fb_logger.warning(msg)
+
+    async def async_archive_feedback(self) -> str:
+        """Przenies biezacy dziennik (+ pliki rotacji) do *_archived_<data>*
+        i zacznij glowny plik od nowa — pierwszy nowy wpis bedzie pelnym
+        zrzutem, wiec widok diff nie liczy zmian wzgledem archiwum."""
+        import os
+        stamp = time.strftime("%Y%m%d-%H%M%S")
+        base = self.hass.config.path(FEEDBACK_LOG)
+        dest = self.hass.config.path(
+            FEEDBACK_LOG.replace(".log", f"_archived_{stamp}.log"))
+
+        def _move() -> None:
+            self._fb_detach()
+            if os.path.exists(base):
+                os.replace(base, dest)
+            for i in (1, 2):  # backupCount=2 w _fb_attach
+                if os.path.exists(f"{base}.{i}"):
+                    os.replace(f"{base}.{i}", f"{dest}.{i}")
+            if self.feedback:
+                self._fb_attach()
+
+        await self.hass.async_add_executor_job(_move)
+        name = os.path.basename(dest)
+        _LOGGER.warning("DZQ_ACTION | ARCHIVE | feedback log -> %s", name)
+        return name
 
     @staticmethod
     def _attrs_json(attrs: dict) -> str:
@@ -362,7 +393,12 @@ class QueueManager:
         if item is None:
             return
         if item["status"] == STATUS_ACTIVE:
-            # removing the item being cleaned = stop that room, move on
+            # removing the item being cleaned = stop that room, move on —
+            # ale tylko gdy robot FAKTYCZNIE sprzata. Usuwanie pokoi przy
+            # robocie stojacym w doku nie moze go budzic (log 24.07 09:21:
+            # "przy usuwaniu kolejka sie nagle obudzila")
+            vac = self.hass.states.get(self.vacuum_entity)
+            was_cleaning = vac is not None and self._task_running(vac)
             self.queue.remove(item)
             self._expect_stop_until = time.monotonic() + 15
             self._notify()
@@ -373,8 +409,12 @@ class QueueManager:
                 )
             except Exception as err:  # noqa: BLE001
                 _LOGGER.warning("vacuum.stop failed on active remove: %s", err)
-            if self.running:
+            if self.running and was_cleaning:
                 self._schedule_dispatch(4)
+            elif self.running:
+                self.running = False
+                self.paused_reason = "aktywny pokój usunięty — kolejka wstrzymana"
+                self._notify()
             return
         self.queue.remove(item)
         self._notify()
@@ -508,6 +548,7 @@ class QueueManager:
         self._expect_stop_until = time.monotonic() + 15
         active = self._active()
         if active is not None:
+            self._record_run(active, "skipped")
             active["status"] = STATUS_SKIPPED
         self._notify()
         try:
@@ -536,7 +577,8 @@ class QueueManager:
         if item is not None:
             item["status"] = STATUS_PENDING
             for key in ("interrupted", "reason", "started_at", "seen_running",
-                        "interrupted_since", "stall_warned", "redispatched"):
+                        "interrupted_since", "stall_warned", "redispatched",
+                        "dock_returns"):
                 item.pop(key, None)
         self._notify()
         try:
@@ -601,6 +643,7 @@ class QueueManager:
         _LOGGER.warning("DZQ_ACTION | SKIP | active_room=%s", item.get('room') if item else None)
         if item is None:
             return
+        self._record_run(item, "skipped")
         item["status"] = STATUS_SKIPPED
         self._expect_stop_until = time.monotonic() + 15
         self._notify()
@@ -845,7 +888,7 @@ class QueueManager:
         # (NOT "redispatched" — it caps the watchdog's lost-command retry
         # and must survive the retry dispatch itself)
         for key in ("interrupted", "was_interrupted", "interrupted_since",
-                    "reason", "seen_running", "stall_warned"):
+                    "reason", "seen_running", "stall_warned", "dock_returns"):
             nxt.pop(key, None)
         self._dispatched_at = time.monotonic()
         self._wait_wash = None
@@ -899,6 +942,7 @@ class QueueManager:
             )
         except Exception as err:  # noqa: BLE001
             _LOGGER.error("Failed to start zone for '%s': %s", nxt["room"], err)
+            self._record_run(nxt, "error")
             nxt["status"] = STATUS_ERROR
             self.running = False
             self.paused_reason = "błąd wysyłki strefy do robota"
@@ -973,6 +1017,22 @@ class QueueManager:
 
         return False
 
+    def _foreign_task(self, attrs: dict) -> bool:
+        """Robot wykonuje zadanie, ktore NIE jest nasza strefa — np. power
+        na podniesionym robocie startuje pelne sprzatanie domu (log 24.07
+        08:31: task_status 'cleaning', cleaned_area zresetowane, a kolejka
+        przez 10 min myslala, ze to nadal jej pokoj)."""
+        b = self._to_bool
+        if b(attrs.get("zone_cleaning")):
+            return False
+        if (b(attrs.get("segment_cleaning")) or b(attrs.get("spot_cleaning"))
+                or b(attrs.get("cruising"))):
+            return True
+        return self._task_status_value() in (
+            "cleaning", "segment_cleaning", "spot_cleaning", "cruising",
+            "fast_mapping",
+        )
+
     def _task_running(self, state) -> bool:
         """Czy robot faktycznie sprzata (nie stoi, nie wstrzymany).
 
@@ -1037,6 +1097,10 @@ class QueueManager:
         # zapisalyby sie NIGDY (guard w _finish_item je pomija)
         if reason != "wraca do bazy":
             item["was_interrupted"] = True
+        if reason in ("mycie mopa", "jedzie myć mopa", "suszenie mopa",
+                      "ładowanie", "opróżnianie kurzu"):
+            # przerwy serwisowe w doku — "ile powrotow do bazy" w historii
+            item["dock_returns"] = item.get("dock_returns", 0) + 1
         item["interrupted_since"] = time.time()
         item["reason"] = reason
         _LOGGER.warning("DZQ_DECISION | INTERRUPTED | room=%s reason=%s",
@@ -1047,12 +1111,43 @@ class QueueManager:
             )
         self._notify()
 
-    def _cancelled_by_area(self, item: dict) -> str | None:
-        """Firmware L10 Prime nie emituje eventu dreame_vacuum_task_status
-        (0 wpisow DZQ_EVENT w logach), wiec domek/stop na robocie wyglada
-        identycznie jak ukonczone zadanie. Rozroznienie po danych: realne
-        zakonczenia sprzataja 57-82%% powierzchni strefy, anulowania 0-4%%
-        (log 23.07). "Completed" przy ulamku strefy = anulowano."""
+    def _record_run(self, item: dict, outcome: str) -> None:
+        """Wpis do historii pokoju (karta statystyk). Zapis na dysk robi
+        _notify() wolane przez kazda sciezke konczaca przebieg."""
+        started = item.get("started_at")
+        if not started:
+            return
+        pct = None
+        st = self.hass.states.get(self.vacuum_entity)
+        try:
+            x1, y1, x2, y2 = item["zone"]
+            zone_m2 = abs(x2 - x1) * abs(y2 - y1) / 1_000_000
+            cleaned = float(st.attributes.get("cleaned_area"))
+            if zone_m2 > 0:
+                pct = min(100, round(100 * cleaned / zone_m2))
+        except (TypeError, ValueError, KeyError, AttributeError):
+            pass
+        suction_off = item.get("suction") == "off"
+        water_off = item.get("water") == "off"
+        runs = self.history.setdefault(item["room"], [])
+        runs.append({
+            "ts": round(started),
+            "dur": round(time.time() - started),
+            "pct": pct,
+            "suction": item.get("suction"),
+            "water": item.get("water"),
+            "repeats": item.get("repeats", 1),
+            "mode": ("sweeping" if water_off
+                     else "mopping" if suction_off
+                     else "sweeping_and_mopping"),
+            "outcome": outcome,
+            "returns": item.get("dock_returns", 0),
+        })
+        del runs[:-HISTORY_MAX_RUNS]
+
+    def _area_ratio(self, item: dict) -> float | None:
+        """Sprzatnieta czesc strefy (0..1); None gdy brak danych lub strefa
+        za mala (cleaned_area zaokragla sie do pelnych m²)."""
         st = self.hass.states.get(self.vacuum_entity)
         if st is None:
             return None
@@ -1063,30 +1158,64 @@ class QueueManager:
         except (TypeError, ValueError, KeyError):
             return None
         if zone_m2 < 3:
-            return None  # male strefy: cleaned_area zaokragla sie do 0-1 m2
-        if cleaned < CANCEL_AREA_RATIO * zone_m2:
-            return ("zatrzymano na robocie — sprzątnięte %.0f z %.0f m² "
-                    "strefy" % (cleaned, zone_m2))
-        return None
+            return None
+        return max(0.0, cleaned / zone_m2)
+
+    def _after_finish_dispatch(self, item: dict) -> None:
+        """Wspolny ogon po zamknieciu pokoju: wash-wait albo kolejny."""
+        if not self.running:
+            return
+        if self.wait_wash and item.get("water") != "off":
+            # nie wysylaj kolejnego pokoju, dopoki stacja nie umyje mopa
+            self._wait_wash = {"since": time.monotonic(), "seen": False}
+            _LOGGER.warning("DZQ_DECISION | WAIT_WASH | room=%s", item["room"])
+            self._schedule_watchdog()
+        else:
+            self._schedule_dispatch(self.delay_between_s)
 
     def _finish_item(self, item: dict, why: str, state_str: str) -> None:
         """Mark the active item done and (if running) line up the next one."""
-        # porzucone / anulowane zadanie tez przychodzi jako "completed" —
-        # centralny guard dla wszystkich sciezek DONE
+        # porzucone / anulowane / niedostepne zadanie tez przychodzi jako
+        # "completed" — centralny guard dla wszystkich sciezek DONE.
+        # Firmware L10 Prime nie emituje eventu dreame_vacuum_task_status,
+        # wiec rozrozniamy po sprzatnietej powierzchni (log 23-24.07):
+        # realne zakonczenia 57-82%, domek/stop w trakcie 1-39%,
+        # zamkniete drzwi (robot nie wjechal) <5%.
         if self._abandoned(item):
             self.hass.async_create_task(
                 self._cancel_active(item, "robot porzucił wstrzymane zadanie"))
             return
-        cancel_reason = self._cancelled_by_area(item)
-        if cancel_reason is not None:
-            self.hass.async_create_task(
-                self._cancel_active(item, cancel_reason))
+        ratio = self._area_ratio(item)
+        if ratio is not None and ratio < UNREACHABLE_AREA_RATIO:
+            # pokoj niedostepny (zamkniete/uchylone drzwi) -> pomin, jedz dalej
+            self._record_run(item, "skipped")
+            item["interrupted"] = False
+            item.pop("reason", None)
+            item["status"] = STATUS_SKIPPED
+            _LOGGER.warning(
+                "DZQ_DECISION | UNREACHABLE | room=%s cleaned=%.0f%% — "
+                "pokój pominięty, kolejka jedzie dalej",
+                item["room"], ratio * 100)
+            self._user_notify(
+                f"Pokój „{item['room']}”: robot nie wjechał do strefy "
+                f"(sprzątnięte {ratio:.0%}) — zamknięte drzwi? "
+                "Pokój pominięty, kolejka jedzie dalej."
+            )
+            self._notify()
+            self._after_finish_dispatch(item)
+            return
+        if ratio is not None and ratio < CANCEL_AREA_RATIO:
+            self.hass.async_create_task(self._cancel_active(
+                item,
+                "zatrzymano na robocie — sprzątnięte %.0f%% strefy"
+                % (ratio * 100)))
             return
         started = item.get("started_at") or 0
         duration = time.time() - started if started else 0
         item["interrupted"] = False
         item.pop("reason", None)
         item["status"] = STATUS_DONE
+        self._record_run(item, "done")
         # przerwane przebiegi (ladowanie/mycie w srodku) psuja srednia — pomijamy
         if 30 < duration < 4 * 3600 and not item.get("was_interrupted"):
             per_pass = duration / max(1, item.get("repeats", 1))
@@ -1100,15 +1229,7 @@ class QueueManager:
         if not self.running and self.paused_reason and "dokończy" in self.paused_reason:
             self.paused_reason = "pokój dokończony — kolejka wstrzymana"
         self._notify()
-        if not self.running:
-            return
-        if self.wait_wash and item.get("water") != "off":
-            # nie wysylaj kolejnego pokoju, dopoki stacja nie umyje mopa
-            self._wait_wash = {"since": time.monotonic(), "seen": False}
-            _LOGGER.warning("DZQ_DECISION | WAIT_WASH | room=%s", item["room"])
-            self._schedule_watchdog()
-        else:
-            self._schedule_dispatch(self.delay_between_s)
+        self._after_finish_dispatch(item)
 
     async def _cancel_active(self, item: dict, reason: str) -> None:
         """User cancelled the task on the robot/app — pause, don't advance."""
@@ -1118,9 +1239,11 @@ class QueueManager:
         self.running = False
         self.paused_reason = reason
         self._wait_wash = None
+        self._record_run(item, "cancelled")
         item["status"] = STATUS_PENDING
         for key in ("interrupted", "reason", "started_at", "seen_running",
-                    "interrupted_since", "stall_warned", "redispatched"):
+                    "interrupted_since", "stall_warned", "redispatched",
+                    "dock_returns"):
             item.pop(key, None)
         _LOGGER.warning("DZQ_DECISION | CANCELLED | room=%s reason=%s",
                         item["room"], reason)
@@ -1200,6 +1323,15 @@ class QueueManager:
         if time.monotonic() - self._dispatched_at < self.grace_s:
             return
 
+        # power/aplikacja uruchomily INNE zadanie -> nie sledz go jako
+        # naszego pokoju; pauza i czytelny powod
+        if self._foreign_task(a):
+            await self._cancel_active(
+                item,
+                "robot wykonuje inne zadanie (uruchomione przyciskiem "
+                "lub aplikacją)")
+            return
+
         if self._task_running(st):
             item["seen_running"] = True
             if item.get("interrupted"):
@@ -1222,12 +1354,13 @@ class QueueManager:
                 self._mark_interrupted(item, self._interrupt_reason(a))
             else:
                 # Ostrzezenie PRZED porzuceniem zadania przez firmware
-                # (~30 min RECZNEJ pauzy). Ladowanie / mycie / suszenie to
-                # legalne dlugie przerwy — firmware sam je wznowi, nie
-                # odliczamy dla nich timeoutu.
+                # (~30 min RECZNEJ pauzy). Mycie / suszenie / auto-pauza
+                # przy niskiej baterii (cleaning_paused) to legalne przerwy
+                # — firmware sam je wznowi. Ale paused=True w doku podczas
+                # ladowania NIE wznowi sie samo (log 24.07: 38 min zombie
+                # bez ostrzezenia), wiec ladowanie juz nie wylacza alarmu.
                 manual_pause = (
                     b(a.get("paused"))
-                    and not b(a.get("charging"))
                     and not b(a.get("cleaning_paused"))
                     and not b(a.get("washing"))
                     and not b(a.get("washing_paused"))
@@ -1260,6 +1393,7 @@ class QueueManager:
             if item.get("seen_running"):
                 self._finish_item(item, "DONE_WATCHDOG", st.state)
             elif item.get("redispatched"):
+                self._record_run(item, "error")
                 item["status"] = STATUS_ERROR
                 self.running = False
                 self.paused_reason = "robot dwukrotnie nie podjął strefy"
