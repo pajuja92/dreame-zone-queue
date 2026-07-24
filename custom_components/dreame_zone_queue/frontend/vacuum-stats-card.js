@@ -4,13 +4,15 @@
  * najczęstsze tryby). Klik w pokój → historia wszystkich przebiegów.
  * Dane z GET /api/dreame_zone_queue/history (Store integracji, 100/pokój).
  *
- * Konfiguracja karty:
+ * Konfiguracja karty (wszystko ustawialne w wizualnym edytorze Lovelace):
  *   type: custom:vacuum-stats-card
  *   title: Statystyki sprzątania        (opcjonalnie)
  *   columns: [last, dur, pct, ...]      (opcjonalnie — kolumny widoku ogólnego)
  *   detail_columns: [date, time, ...]   (opcjonalnie — kolumny szczegółów)
- * Kolumny można też wybrać w ⚙ na karcie (zapis w przeglądarce; YAML jest
- * używany, gdy nie ma wyboru z ⚙).
+ *   width: 600px                        (opcjonalnie — max szerokość karty)
+ *   compact: true                       (opcjonalnie — mniejsza czcionka)
+ * Priorytet kolumn: konfiguracja karty > wybór z ⚙ (per przeglądarka)
+ * > domyślne.
  */
 
 const SUCTION_PL = { off: "—", quiet: "Cichy", silent: "Cichy",
@@ -103,6 +105,10 @@ class VacuumStatsCard extends HTMLElement {
     return { title: "Statystyki sprzątania" };
   }
 
+  static getConfigElement() {
+    return document.createElement("vacuum-stats-card-editor");
+  }
+
   async _fetch() {
     if (!this._hass) return;
     this._lastFetch = Date.now();
@@ -117,16 +123,20 @@ class VacuumStatsCard extends HTMLElement {
     this._render();
   }
 
-  /* kolumny: localStorage (⚙) > YAML > domyślne */
+  _configCols(view) {
+    const c = view === "overview" ? this._config.columns
+                                  : this._config.detail_columns;
+    return Array.isArray(c) && c.length ? c : null;
+  }
+
+  /* kolumny: konfiguracja karty (edytor/YAML) > localStorage (⚙) > domyślne */
   _cols(view) {
-    const lsKey = `dzq-stats-cols-${view}`;
+    const cfg = this._configCols(view);
+    if (cfg) return cfg;
     try {
-      const ls = JSON.parse(localStorage.getItem(lsKey));
+      const ls = JSON.parse(localStorage.getItem(`dzq-stats-cols-${view}`));
       if (Array.isArray(ls) && ls.length) return ls;
     } catch (_e) { /* brak/uszkodzony zapis */ }
-    const yaml = view === "overview" ? this._config.columns
-                                     : this._config.detail_columns;
-    if (Array.isArray(yaml) && yaml.length) return yaml;
     return view === "overview" ? DEFAULT_OVERVIEW : DEFAULT_DETAIL;
   }
 
@@ -176,9 +186,13 @@ class VacuumStatsCard extends HTMLElement {
       body = this._overviewHtml();
     }
 
+    const widthCss = this._config.width
+      ? `max-width: ${this._esc(this._config.width)}; margin: 0 auto;` : "";
+    const compact = !!this._config.compact;
     this.shadowRoot.innerHTML = `
       <style>
-        ha-card { padding: 14px 16px 16px; }
+        ha-card { padding: ${compact ? "10px 12px 12px" : "14px 16px 16px"};
+                  ${widthCss} }
         .hdr { display: flex; align-items: center; gap: 8px; flex-wrap: wrap;
                margin-bottom: 10px; }
         .hdr h2 { flex: 1; margin: 0; font-size: 1.15em; font-weight: 500;
@@ -194,11 +208,14 @@ class VacuumStatsCard extends HTMLElement {
         .gear { font-size: 1.1em; opacity: .7; }
         .gear:hover { opacity: 1; }
         .back { color: var(--primary-color) !important; font-weight: 500; }
-        table { width: 100%; border-collapse: collapse; font-size: .92em; }
+        table { width: 100%; border-collapse: collapse;
+                font-size: ${compact ? ".82em" : ".92em"}; }
         th { text-align: left; font-size: .74em; text-transform: uppercase;
              letter-spacing: .04em; color: var(--secondary-text-color);
-             padding: 5px 8px; border-bottom: 1px solid var(--divider-color); }
-        td { padding: 7px 8px; border-bottom: 1px solid var(--divider-color); }
+             padding: ${compact ? "3px 6px" : "5px 8px"};
+             border-bottom: 1px solid var(--divider-color); }
+        td { padding: ${compact ? "4px 6px" : "7px 8px"};
+             border-bottom: 1px solid var(--divider-color); }
         tr.room { cursor: pointer; }
         tr.room:hover td { background: var(--secondary-background-color); }
         td.name { font-weight: 500; }
@@ -286,13 +303,17 @@ class VacuumStatsCard extends HTMLElement {
     const view = this._room ? "detail" : "overview";
     const all = view === "overview" ? OVERVIEW_COLS : DETAIL_COLS;
     const current = this._cols(view);
+    const cfgManaged = !!this._configCols(view);
     box.innerHTML = `<div class="setbox">
       <b>Kolumny (${view === "overview" ? "widok ogólny" : "szczegóły pokoju"}):</b><br>
       ${Object.entries(all).map(([k, c]) =>
         `<label><input type="checkbox" data-col="${k}"
-          ${current.includes(k) ? "checked" : ""}> ${c.label}</label>`).join("")}
-      <div class="note">Zapis w tej przeglądarce. Można też ustawić w YAML
-        karty (columns / detail_columns).</div>
+          ${current.includes(k) ? "checked" : ""}
+          ${cfgManaged ? "disabled" : ""}> ${c.label}</label>`).join("")}
+      <div class="note">${cfgManaged
+        ? "Kolumny są ustawione w edytorze karty — tam je zmienisz."
+        : "Zapis w tej przeglądarce. Na stałe ustawisz je w edytorze karty."}
+      </div>
     </div>`;
     box.style.display = "";
     box.querySelectorAll("input[data-col]").forEach((cb) => {
@@ -307,7 +328,111 @@ class VacuumStatsCard extends HTMLElement {
   }
 }
 
+/* Wizualny edytor konfiguracji (GUI w edytorze Lovelace) */
+class VacuumStatsCardEditor extends HTMLElement {
+  setConfig(config) {
+    this._config = { ...(config || {}) };
+    this._render();
+  }
+  set hass(_h) {}
+
+  _emit() {
+    this.dispatchEvent(new CustomEvent("config-changed", {
+      detail: { config: this._config },
+      bubbles: true,
+      composed: true,
+    }));
+  }
+
+  _colGroup(title, all, key, defaults) {
+    const current = Array.isArray(this._config[key]) && this._config[key].length
+      ? this._config[key] : defaults;
+    return `<div class="grp"><b>${title}</b><div>
+      ${Object.entries(all).map(([k, c]) =>
+        `<label><input type="checkbox" data-group="${key}" data-col="${k}"
+          ${current.includes(k) ? "checked" : ""}> ${c.label}</label>`).join("")}
+    </div></div>`;
+  }
+
+  _render() {
+    if (!this.shadowRoot) this.attachShadow({ mode: "open" });
+    const c = this._config;
+    this.shadowRoot.innerHTML = `
+      <style>
+        :host { display: block; }
+        .row { display: flex; gap: 10px; margin-bottom: 12px; flex-wrap: wrap; }
+        .row > div { flex: 1; min-width: 160px; }
+        label.f { display: block; font-size: .8em;
+                  color: var(--secondary-text-color); margin-bottom: 3px; }
+        input[type="text"], select { width: 100%; box-sizing: border-box;
+                  padding: 8px 10px; border-radius: 6px;
+                  border: 1px solid var(--divider-color);
+                  background: var(--card-background-color);
+                  color: var(--primary-text-color); font: inherit; }
+        .grp { margin-bottom: 12px; }
+        .grp b { display: block; margin-bottom: 5px; }
+        .grp label { display: inline-flex; align-items: center; gap: 5px;
+                  margin: 3px 12px 3px 0; font-size: .9em; cursor: pointer; }
+        .chk { display: inline-flex; align-items: center; gap: 6px;
+               margin-top: 20px; cursor: pointer; }
+        .hint { font-size: .78em; color: var(--secondary-text-color);
+                margin-top: -6px; margin-bottom: 12px; }
+      </style>
+      <div class="row">
+        <div>
+          <label class="f">Tytuł karty</label>
+          <input type="text" id="title" value="${(c.title || "").replace(/"/g, "&quot;")}">
+        </div>
+        <div>
+          <label class="f">Maks. szerokość karty</label>
+          <select id="width">
+            <option value="">auto (cała dostępna)</option>
+            <option value="400px">400 px</option>
+            <option value="500px">500 px</option>
+            <option value="600px">600 px</option>
+            <option value="800px">800 px</option>
+            <option value="1000px">1000 px</option>
+          </select>
+        </div>
+        <label class="chk"><input type="checkbox" id="compact"
+          ${c.compact ? "checked" : ""}> Tryb kompaktowy</label>
+      </div>
+      <div class="hint">Szerokość to górny limit — na węższych ekranach karta
+        i tak się dopasuje. Tryb kompaktowy zmniejsza czcionkę i odstępy.</div>
+      ${this._colGroup("Kolumny — widok ogólny", OVERVIEW_COLS, "columns",
+                       DEFAULT_OVERVIEW)}
+      ${this._colGroup("Kolumny — szczegóły pokoju", DETAIL_COLS,
+                       "detail_columns", DEFAULT_DETAIL)}`;
+
+    const r = this.shadowRoot;
+    const width = r.getElementById("width");
+    width.value = c.width || "";
+    r.getElementById("title").onchange = (e) => {
+      this._config.title = e.target.value || undefined;
+      this._emit();
+    };
+    width.onchange = (e) => {
+      this._config.width = e.target.value || undefined;
+      this._emit();
+    };
+    r.getElementById("compact").onchange = (e) => {
+      this._config.compact = e.target.checked || undefined;
+      this._emit();
+    };
+    r.querySelectorAll("input[data-group]").forEach((cb) => {
+      cb.onchange = () => {
+        const key = cb.dataset.group;
+        const sel = [...r.querySelectorAll(`input[data-group="${key}"]:checked`)]
+          .map((x) => x.dataset.col);
+        this._config[key] = sel.length ? sel : undefined;
+        this._emit();
+      };
+    });
+  }
+}
+
 customElements.define("vacuum-stats-card", VacuumStatsCard);
+customElements.define("vacuum-stats-card-editor", VacuumStatsCardEditor);
 window.customCards = window.customCards || [];
 window.customCards.push({
   type: "vacuum-stats-card",

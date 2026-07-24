@@ -4,6 +4,18 @@ Wszystkie istotne zmiany w projekcie. Format oparty o
 [Keep a Changelog](https://keepachangelog.com/pl/1.1.0/),
 wersjonowanie zgodne z [SemVer](https://semver.org/lang/pl/).
 
+## [2.0.0-beta.11] - 2026-07-24
+
+### Dodane — ustawienia wizualne karty statystyk
+- **Wizualny edytor konfiguracji** `vacuum-stats-card` (GUI w edytorze
+  Lovelace, bez YAML): tytuł, maks. szerokość karty (auto / 400–1000 px,
+  wyśrodkowana), tryb kompaktowy (mniejsza czcionka i odstępy) oraz
+  wybór widocznych kolumn osobno dla widoku ogólnego i szczegółów
+  pokoju.
+- Priorytet kolumn: konfiguracja karty (edytor/YAML) → wybór z ⚙ na
+  karcie (per przeglądarka) → domyślne. Gdy kolumny ustawia edytor
+  karty, ⚙ pokazuje je jako tylko do odczytu z podpowiedzią.
+
 ## [2.0.0-beta.10] - 2026-07-24
 
 ### Naprawione
