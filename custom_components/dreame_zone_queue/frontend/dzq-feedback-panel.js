@@ -1,3 +1,5 @@
+import { attachDraw, defaultMode } from "./dzq-draw.js";
+
 /* Panel boczny "Zone Queue" — dwie zakładki:
  *  · Logi — dziennik feedbacku (/config/dreame_zone_queue_feedback.log);
  *    plik na dysku ZAWSZE pełny, widok/pobranie "diff" liczy różnice w locie.
@@ -194,12 +196,19 @@ class DzqFeedbackPanel extends HTMLElement {
         <span class="sp" style="flex:1"></span>
         <select id="croom">${roomNames.map((r) =>
           `<option>${this._escT(r)}</option>`).join("")}</select>
-        <button class="primary" id="cdraw">▭ Zaznacz ten pokój na mapie</button>
+        <button class="primary" id="cdraw">Zaznacz ten pokój na mapie</button>
         <button class="danger" id="cclear">Wyczyść kalibrację</button>
+      </div>
+      <div class="cbar" id="cmodes" style="display:none">
+        <button id="cmrect">▭ Prostokąt</button>
+        <button id="cmpoly">△ Punkty</button>
+        <button id="cmundo">↩ Cofnij punkt</button>
+        <button id="cmdone" class="primary">✓ Zakończ kształt</button>
+        <span id="cprog" style="color:var(--secondary-text-color)"></span>
       </div>
       <div class="cwrap" id="cwrap">
         <img id="cimg" src="${cam.attributes.entity_picture || ""}" draggable="false">
-        <div class="crect" id="crect"></div>
+        <svg id="csvg" style="position:absolute;inset:0;width:100%;height:100%;pointer-events:none"></svg>
         <div class="cbadge" id="cbadge"></div>
       </div>
       <div class="chint">Wybierz pokój, którego położenie znasz, kliknij
@@ -210,10 +219,8 @@ class DzqFeedbackPanel extends HTMLElement {
     const r = this.shadowRoot;
     const img = r.getElementById("cimg");
     const wrap = r.getElementById("cwrap");
-    const rect = r.getElementById("crect");
     const badge = r.getElementById("cbadge");
-    let drawing = false;
-    let start = null;
+    let armed = false; // czy trwa zaznaczanie pokoju
 
     const status = () => {
       const el = r.getElementById("cst");
@@ -232,69 +239,21 @@ class DzqFeedbackPanel extends HTMLElement {
     img.onload = status;
     status();
 
-    r.getElementById("cdraw").onclick = () => {
-      drawing = true;
-      wrap.style.cursor = "crosshair";
-      this._toast("Obrysuj prostokątem: " + r.getElementById("croom").value);
-    };
-    r.getElementById("cclear").onclick = async () => {
-      await this._hass.callApi("post", "dreame_zone_queue/map_calib", { calib: null });
-      this._mc.calib = null;
-      status();
-      this._toast("Kalibracja wyczyszczona");
-    };
-
-    const pos = (e) => {
-      const b = wrap.getBoundingClientRect();
-      return [Math.max(0, Math.min(e.clientX - b.left, b.width)),
-              Math.max(0, Math.min(e.clientY - b.top, b.height))];
-    };
+    wrap.style.overflow = "hidden";
     const toNat = (x, y) => {
       const f = img.naturalWidth / img.clientWidth;
       return [x * f, y * f];
     };
-    wrap.addEventListener("pointerdown", (e) => {
-      if (!drawing) return;
-      e.preventDefault();
-      start = pos(e);
-      wrap.setPointerCapture(e.pointerId);
-    });
-    wrap.addEventListener("pointermove", (e) => {
-      const [x, y] = pos(e);
-      if (start) {
-        rect.style.left = Math.min(start[0], x) + "px";
-        rect.style.top = Math.min(start[1], y) + "px";
-        rect.style.width = Math.abs(x - start[0]) + "px";
-        rect.style.height = Math.abs(y - start[1]) + "px";
-        rect.style.display = "block";
-      }
-      // dymek weryfikacyjny ze wspolrzednymi odkurzacza
-      const c = this._mc.calib;
-      if (c && !drawing) {
-        const [nx, ny] = toNat(x, y);
-        badge.textContent = "X " + Math.round(c.ax * nx + c.bx) +
-          " · Y " + Math.round(c.ay * ny + c.by);
-        badge.style.left = x + "px";
-        badge.style.top = y + "px";
-        badge.style.display = "block";
-      } else {
-        badge.style.display = "none";
-      }
-    });
-    wrap.addEventListener("pointerleave", () => { badge.style.display = "none"; });
-    wrap.addEventListener("pointerup", async (e) => {
-      if (!start) return;
-      const [x, y] = pos(e);
-      const L = Math.min(start[0], x), T = Math.min(start[1], y);
-      const W = Math.abs(x - start[0]), H = Math.abs(y - start[1]);
-      start = null;
-      rect.style.display = "none";
-      if (W < 8 || H < 8) return;
+    const saveCalib = async (dispPts) => {
       const room = r.getElementById("croom").value;
       const z = this._mc.room_zones[room];
       if (!z) return;
-      const [nL, nT] = toNat(L, T);
-      const [nR, nB] = toNat(L + W, T + H);
+      const nat = dispPts.map((p) => toNat(p[0], p[1]));
+      const nL = Math.min(...nat.map((p) => p[0]));
+      const nR = Math.max(...nat.map((p) => p[0]));
+      const nT = Math.min(...nat.map((p) => p[1]));
+      const nB = Math.max(...nat.map((p) => p[1]));
+      if (nR - nL < 8 || nB - nT < 8) return;
       const vxmin = Math.min(z[0], z[2]), vxmax = Math.max(z[0], z[2]);
       const vymin = Math.min(z[1], z[3]), vymax = Math.max(z[1], z[3]);
       // os Y odkurzacza rosnie do gory ekranu (Dreame) -> flip
@@ -308,14 +267,72 @@ class DzqFeedbackPanel extends HTMLElement {
       try {
         await this._hass.callApi("post", "dreame_zone_queue/map_calib", { calib });
         this._mc.calib = calib;
-        drawing = false;
+        armed = false;
+        draw.clear();
+        r.getElementById("cmodes").style.display = "none";
         wrap.style.cursor = "";
         status();
         this._toast("✓ Kalibracja zapisana — zweryfikuj kursorem na innym pokoju");
       } catch (err) {
         this._toast("Błąd zapisu: " + err);
       }
+    };
+
+    const draw = attachDraw(wrap, img, r.getElementById("csvg"), {
+      shape: (sh) => { if (armed) saveCalib(sh.pts); },
+      progress: (n) => {
+        r.getElementById("cprog").textContent =
+          draw && draw.getMode() === "poly" && n ? `punkty: ${n}` : "";
+      },
+      hover: (pt) => {
+        const c = this._mc.calib;
+        if (!c || armed || !pt) { badge.style.display = "none"; return; }
+        const [nx, ny] = toNat(pt[0], pt[1]);
+        badge.textContent = "X " + Math.round(c.ax * nx + c.bx) +
+          " · Y " + Math.round(c.ay * ny + c.by);
+        badge.style.left = pt[0] + "px";
+        badge.style.top = pt[1] + "px";
+        badge.style.display = "block";
+      },
     });
+
+    const setMode = (m) => {
+      draw.setMode(m);
+      const on = "var(--primary-color)";
+      const off = "var(--card-background-color)";
+      const mr = r.getElementById("cmrect"), mp = r.getElementById("cmpoly");
+      mr.style.background = m === "rect" ? on : off;
+      mr.style.color = m === "rect" ? "#fff" : "";
+      mp.style.background = m === "poly" ? on : off;
+      mp.style.color = m === "poly" ? "#fff" : "";
+      r.getElementById("cmundo").style.display = m === "poly" ? "" : "none";
+      r.getElementById("cmdone").style.display = m === "poly" ? "" : "none";
+    };
+    r.getElementById("cmrect").onclick = () => setMode("rect");
+    r.getElementById("cmpoly").onclick = () => setMode("poly");
+    r.getElementById("cmundo").onclick = () => draw.undo();
+    r.getElementById("cmdone").onclick = () => {
+      if (!draw.finish()) this._toast("Wielokąt wymaga min. 3 punktów");
+    };
+    wrap.addEventListener("dblclick", () => {
+      if (armed && draw.getMode() === "poly") r.getElementById("cmdone").onclick();
+    });
+
+    r.getElementById("cdraw").onclick = () => {
+      armed = true;
+      draw.clear();
+      r.getElementById("cmodes").style.display = "";
+      setMode(defaultMode());
+      wrap.style.cursor = "crosshair";
+      this._toast("Zaznacz na mapie: " + r.getElementById("croom").value +
+        " (prostokątem lub punktami; dwa palce = zoom)");
+    };
+    r.getElementById("cclear").onclick = async () => {
+      await this._hass.callApi("post", "dreame_zone_queue/map_calib", { calib: null });
+      this._mc.calib = null;
+      status();
+      this._toast("Kalibracja wyczyszczona");
+    };
   }
 
   _escT(s) {

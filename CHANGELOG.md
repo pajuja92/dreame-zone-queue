@@ -4,6 +4,21 @@ Wszystkie istotne zmiany w projekcie. Format oparty o
 [Keep a Changelog](https://keepachangelog.com/pl/1.1.0/),
 wersjonowanie zgodne z [SemVer](https://semver.org/lang/pl/).
 
+## [2.0.0-beta.17] - 2026-07-26
+
+### Zmienione — rysowanie wygodne na telefonie, oba tryby wszędzie
+- **Wspólny widget rysowania** (`dzq-draw.js`) dla modalu „▭ Własna
+  strefa" i kalibracji w panelu — w OBU miejscach dostępny prostokąt
+  (przeciągnięcie) i punkty/wielokąt (min. 3 tapnięcia).
+- **Telefon**: pinch-zoom i przesuwanie mapy dwoma palcami (jeden palec
+  rysuje), na ekranach dotykowych domyślny jest tryb punktów (tapnięcia
+  zamiast precyzyjnego przeciągania), przycisk „↩ Cofnij punkt",
+  większe uchwyty punktów. Na desktopie zoom kółkiem myszy.
+- Kalibracja w panelu: po „Zaznacz ten pokój na mapie" pojawia się
+  pasek trybów (▭ Prostokąt / △ Punkty / ↩ Cofnij / ✓ Zakończ);
+  obrys punktami też działa — do kalibracji brany jest prostokąt
+  obejmujący.
+
 ## [2.0.0-beta.16] - 2026-07-26
 
 Rozdzielenie funkcji z beta.15 zgodnie z feedbackiem: rysowanie strefy

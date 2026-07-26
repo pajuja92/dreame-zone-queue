@@ -1,3 +1,4 @@
+import { attachDraw, defaultMode } from "./dzq-draw.js";
 /* Vacuum Queue Card — bundled with the Dreame Zone Queue integration.
  * v1.3.3: redesigned styling — card-style rows with status accents on
  * mobile, labeled fields, touch-sized controls, polished desktop table.
@@ -366,6 +367,7 @@ class VacuumQueueCard extends HTMLElement {
         <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;font-size:.9em">
           <button data-x="mrect" style="${btnCss}background:var(--primary-color,#03a9f4);color:#fff">▭ Prostokąt</button>
           <button data-x="mpoly" style="${btnCss}background:var(--secondary-background-color,#333);color:inherit">△ Wielokąt</button>
+          <button data-x="mundo" style="${btnCss}background:var(--secondary-background-color,#333);color:inherit">↩ Cofnij punkt</button>
           <button data-x="mclear" style="${btnCss}background:var(--secondary-background-color,#333);color:inherit">Wyczyść</button>
           <span class="zhint" style="color:var(--secondary-text-color)"></span>
         </div>
@@ -406,50 +408,13 @@ class VacuumQueueCard extends HTMLElement {
     const doneBtn = box.querySelector('[data-x="done"]');
     const mrect = box.querySelector('[data-x="mrect"]');
     const mpoly = box.querySelector('[data-x="mpoly"]');
-    let mode = "rect";       // "rect" | "poly"
-    let start = null;        // drag start (rect)
-    let drag = null;         // aktualny prostokat [L,T,W,H]
-    let pts = [];            // punkty wielokata (px wyswietlane)
+    const undoBtn = box.querySelector('[data-x="mundo"]');
+    zwrap.style.overflow = "hidden";
+    zwrap.style.borderRadius = "10px";
     let zoneMm = null;       // wynik [x1,y1,x2,y2]
 
     const staleCalib = () =>
       img.naturalWidth && calib.iw && Math.abs(calib.iw - img.naturalWidth) > 1;
-    const refreshHint = () => {
-      if (staleCalib()) {
-        hint.textContent = "⚠ Mapa zmieniła rozmiar — ponów kalibrację w panelu Zone Queue.";
-      } else {
-        hint.textContent = mode === "rect"
-          ? "Przeciągnij prostokąt po mapie."
-          : "Klikaj narożniki (min. 3), zakończ dwuklikiem lub „Zakończ kształt”.";
-      }
-    };
-    img.onload = refreshHint;
-    refreshHint();
-
-    const setMode = (m) => {
-      mode = m;
-      mrect.style.background = m === "rect" ? "var(--primary-color,#03a9f4)" : "var(--secondary-background-color,#333)";
-      mrect.style.color = m === "rect" ? "#fff" : "inherit";
-      mpoly.style.background = m === "poly" ? "var(--primary-color,#03a9f4)" : "var(--secondary-background-color,#333)";
-      mpoly.style.color = m === "poly" ? "#fff" : "inherit";
-      doneBtn.style.display = m === "poly" ? "" : "none";
-      clearShape();
-      refreshHint();
-    };
-    const clearShape = () => {
-      pts = [];
-      drag = null;
-      start = null;
-      zoneMm = null;
-      svg.innerHTML = "";
-      info.textContent = "";
-      okBtn.disabled = true;
-      okBtn.style.opacity = ".5";
-    };
-    mrect.onclick = () => setMode("rect");
-    mpoly.onclick = () => setMode("poly");
-    box.querySelector('[data-x="mclear"]').onclick = clearShape;
-
     const toNat = (x, y) => {
       const f = img.naturalWidth / img.clientWidth;
       return [x * f, y * f];
@@ -458,30 +423,8 @@ class VacuumQueueCard extends HTMLElement {
       const r = (v) => Math.round(v / 10) * 10;
       return [r(calib.ax * nx + calib.bx), r(calib.ay * ny + calib.by)];
     };
-    const pos = (e) => {
-      const r = zwrap.getBoundingClientRect();
-      return [Math.max(0, Math.min(e.clientX - r.left, r.width)),
-              Math.max(0, Math.min(e.clientY - r.top, r.height))];
-    };
-    const redraw = () => {
-      let html = "";
-      if (drag) {
-        html += `<rect x="${drag[0]}" y="${drag[1]}" width="${drag[2]}" height="${drag[3]}"
-          fill="rgba(255,184,77,.18)" stroke="#ffb84d" stroke-width="2" rx="3"/>`;
-      }
-      if (pts.length) {
-        const ptStr = pts.map((p) => p.join(",")).join(" ");
-        html += pts.length > 2
-          ? `<polygon points="${ptStr}" fill="rgba(255,184,77,.18)" stroke="#ffb84d" stroke-width="2"/>`
-          : `<polyline points="${ptStr}" fill="none" stroke="#ffb84d" stroke-width="2"/>`;
-        html += pts.map((p) =>
-          `<circle cx="${p[0]}" cy="${p[1]}" r="4" fill="#ffb84d"/>`).join("");
-      }
-      svg.innerHTML = html;
-    };
     const bboxToMm = (dispPts) => {
-      const nat = dispPts.map((p) => toNat(p[0], p[1]));
-      const mm = nat.map((p) => toMm(p[0], p[1]));
+      const mm = dispPts.map((p) => toMm(...toNat(p[0], p[1])));
       const xs = mm.map((p) => p[0]), ys = mm.map((p) => p[1]);
       return [Math.min(...xs), Math.min(...ys), Math.max(...xs), Math.max(...ys)];
     };
@@ -500,49 +443,60 @@ class VacuumQueueCard extends HTMLElement {
       okBtn.disabled = false;
       okBtn.style.opacity = "1";
     };
-    const finishPoly = () => {
-      if (pts.length < 3) {
-        info.textContent = "⚠ Wielokąt wymaga min. 3 punktów.";
-        return;
-      }
-      redraw();
-      acceptZone(bboxToMm(pts), " · (prostokąt obejmujący wielokąt)");
-    };
-    doneBtn.onclick = finishPoly;
-    zwrap.addEventListener("dblclick", () => { if (mode === "poly") finishPoly(); });
 
-    zwrap.addEventListener("pointerdown", (e) => {
-      if (staleCalib()) return;
-      e.preventDefault();
-      if (mode === "rect") {
-        start = pos(e);
-        zwrap.setPointerCapture(e.pointerId);
+    const draw = attachDraw(zwrap, img, svg, {
+      shape: (sh) => acceptZone(bboxToMm(sh.pts),
+        sh.kind === "poly" ? " · (prostokąt obejmujący wielokąt)" : ""),
+      progress: (n) => {
+        if (draw && draw.getMode() === "poly" && n > 0 && n < 3) {
+          info.textContent = `Punkty: ${n}/3 (minimum)`;
+        }
+      },
+    });
+
+    const refreshHint = () => {
+      if (staleCalib()) {
+        hint.textContent = "⚠ Mapa zmieniła rozmiar — ponów kalibrację w panelu Zone Queue.";
+      } else {
+        hint.textContent = (draw.getMode() === "rect"
+          ? "Przeciągnij prostokąt po mapie."
+          : "Tapnij narożniki (min. 3), potem „Zakończ kształt”.") +
+          " Dwa palce / kółko = zoom i przesuwanie.";
       }
+    };
+    img.onload = refreshHint;
+
+    const setMode = (m) => {
+      draw.setMode(m);
+      zoneMm = null;
+      info.textContent = "";
+      okBtn.disabled = true;
+      okBtn.style.opacity = ".5";
+      mrect.style.background = m === "rect" ? "var(--primary-color,#03a9f4)" : "var(--secondary-background-color,#333)";
+      mrect.style.color = m === "rect" ? "#fff" : "inherit";
+      mpoly.style.background = m === "poly" ? "var(--primary-color,#03a9f4)" : "var(--secondary-background-color,#333)";
+      mpoly.style.color = m === "poly" ? "#fff" : "inherit";
+      doneBtn.style.display = m === "poly" ? "" : "none";
+      undoBtn.style.display = m === "poly" ? "" : "none";
+      refreshHint();
+    };
+    mrect.onclick = () => setMode("rect");
+    mpoly.onclick = () => setMode("poly");
+    undoBtn.onclick = () => draw.undo();
+    box.querySelector('[data-x="mclear"]').onclick = () => {
+      draw.clear();
+      zoneMm = null;
+      info.textContent = "";
+      okBtn.disabled = true;
+      okBtn.style.opacity = ".5";
+    };
+    doneBtn.onclick = () => {
+      if (!draw.finish()) info.textContent = "⚠ Wielokąt wymaga min. 3 punktów.";
+    };
+    zwrap.addEventListener("dblclick", () => {
+      if (draw.getMode() === "poly") doneBtn.onclick();
     });
-    zwrap.addEventListener("pointermove", (e) => {
-      if (mode !== "rect" || !start) return;
-      const [x, y] = pos(e);
-      drag = [Math.min(start[0], x), Math.min(start[1], y),
-              Math.abs(x - start[0]), Math.abs(y - start[1])];
-      redraw();
-    });
-    zwrap.addEventListener("pointerup", (e) => {
-      if (staleCalib()) return;
-      const [x, y] = pos(e);
-      if (mode === "poly") {
-        pts.push([x, y]);
-        redraw();
-        return;
-      }
-      if (!start) return;
-      const L = Math.min(start[0], x), T = Math.min(start[1], y);
-      const W = Math.abs(x - start[0]), H = Math.abs(y - start[1]);
-      start = null;
-      if (W < 6 || H < 6) { drag = null; redraw(); return; }
-      drag = [L, T, W, H];
-      redraw();
-      acceptZone(bboxToMm([[L, T], [L + W, T + H]]));
-    });
+    setMode(defaultMode());
 
     okBtn.onclick = () => {
       if (!zoneMm) return;
