@@ -312,6 +312,218 @@ class VacuumQueueCard extends HTMLElement {
       body.textContent = "B\u0142\u0105d pobierania historii: " + e;
     }
   }
+  /* Modal "Wlasna strefa": mapa z kamery robota + kalibracja po znanym
+   * pokoju (funkcjonalnosc kalibratora pokoi) + rysowanie prostokata.
+   * Kalibracja px->mm trzymana w localStorage (dzq-map-calib). */
+  _zoneDialog() {
+    if (document.querySelector(".dzq-zone-modal")) return;
+    const hass = this._hass;
+    const st = hass.states[this._config.entity];
+    const attrs = (st && st.attributes) || {};
+    const vac = attrs.vacuum_entity || "";
+    const camEnt = this._config.map_camera
+      || ("camera." + (vac.split(".")[1] || "") + "_map");
+    const cam = hass.states[camEnt];
+    const zones = attrs.room_zones || {};
+    const roomNames = Object.keys(zones).sort();
+    const esc = (t) => String(t).replace(/&/g, "&amp;").replace(/</g, "&lt;");
+
+    const wrap = document.createElement("div");
+    wrap.className = "dzq-zone-modal";
+    wrap.style.cssText =
+      "position:fixed;inset:0;z-index:9999;background:rgba(0,0,0,.55);" +
+      "display:flex;align-items:center;justify-content:center;padding:16px;";
+    const box = document.createElement("div");
+    box.style.cssText =
+      "background:var(--card-background-color,#1c1c1e);color:var(--primary-text-color,#fff);" +
+      "border-radius:16px;padding:18px;width:min(760px,100%);max-height:92vh;" +
+      "display:flex;flex-direction:column;gap:10px;overflow:auto;" +
+      "box-shadow:0 12px 40px rgba(0,0,0,.5);";
+    const selCss = "font:inherit;padding:6px 8px;border-radius:8px;" +
+      "border:1px solid var(--divider-color,#444);" +
+      "background:var(--primary-background-color,#111);color:inherit";
+    const btnCss = "font:inherit;padding:8px 14px;border-radius:10px;border:none;cursor:pointer;";
+    if (!cam) {
+      box.innerHTML = `<h3 style="margin:0">▭ Własna strefa</h3>
+        <div>Nie znalazłem kamery mapy (<code>${esc(camEnt)}</code>).
+        Ustaw <code>map_camera</code> w konfiguracji karty.</div>
+        <div style="display:flex;justify-content:flex-end"><button data-x="close"
+          style="${btnCss}background:var(--secondary-background-color,#333);color:inherit">Zamknij</button></div>`;
+    } else {
+      const pic = cam.attributes.entity_picture || "";
+      box.innerHTML = `
+        <h3 style="margin:0;font-size:1.05em">▭ Własna strefa — narysuj na mapie</h3>
+        <div class="zcal" style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;font-size:.9em">
+          <span class="zst"></span>
+          <select class="zroom" style="${selCss}">${roomNames.map((r) =>
+            `<option value="${esc(r)}">${esc(r)}</option>`).join("")}</select>
+          <button data-x="calib" style="${btnCss}background:var(--secondary-background-color,#333);color:inherit">▭ Zaznacz ten pokój (kalibracja)</button>
+        </div>
+        <div class="zwrap" style="position:relative;user-select:none;touch-action:none;line-height:0">
+          <img class="zimg" src="${pic}" draggable="false"
+            style="width:100%;border-radius:10px;display:block">
+          <div class="zrect" style="position:absolute;display:none;border:2px solid #ffb84d;
+            background:rgba(255,184,77,.18);pointer-events:none;border-radius:3px"></div>
+        </div>
+        <div class="zinfo" style="font-size:.9em;color:var(--secondary-text-color)"></div>
+        <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap">
+          <input class="zname" placeholder="Nazwa (np. Pod stołem)" style="${selCss};flex:1;min-width:120px">
+          <select class="zsuction" style="${selCss}">${SUCTION.map((o) =>
+            `<option value="${o}" ${o === "standard" ? "selected" : ""}>Ssanie: ${T_SUCTION[o] || o}</option>`).join("")}</select>
+          <select class="zwater" style="${selCss}">${WATER.map((o) =>
+            `<option value="${o}">Mop: ${T_WATER[o] || o}</option>`).join("")}</select>
+          <select class="zrepeats" style="${selCss}">${REPEATS.map((o) =>
+            `<option value="${o}">${o}×</option>`).join("")}</select>
+        </div>
+        <div style="display:flex;justify-content:flex-end;gap:8px">
+          <button data-x="close" style="${btnCss}background:var(--secondary-background-color,#333);color:inherit">Anuluj</button>
+          <button data-x="ok" disabled style="${btnCss}font-weight:600;background:var(--primary-color,#03a9f4);color:#fff;opacity:.5">+ Dodaj do kolejki</button>
+        </div>`;
+    }
+    wrap.appendChild(box);
+    document.body.appendChild(wrap);
+    const close = () => wrap.remove();
+    wrap.addEventListener("click", (e) => { if (e.target === wrap) close(); });
+    box.querySelector('[data-x="close"]').onclick = close;
+    if (!cam) return;
+
+    const img = box.querySelector(".zimg");
+    const zwrap = box.querySelector(".zwrap");
+    const rectEl = box.querySelector(".zrect");
+    const info = box.querySelector(".zinfo");
+    const stEl = box.querySelector(".zst");
+    const okBtn = box.querySelector('[data-x="ok"]');
+    let mode = "zone";       // "zone" | "calib"
+    let start = null;        // [x,y] w px wyswietlanych
+    let zoneMm = null;       // [x1,y1,x2,y2] wynik
+
+    const loadCalib = () => {
+      try { return JSON.parse(localStorage.getItem("dzq-map-calib")); }
+      catch (e) { return null; }
+    };
+    const calibOk = () => {
+      const c = loadCalib();
+      if (!c) return null;
+      if (img.naturalWidth && c.iw && Math.abs(c.iw - img.naturalWidth) > 1) return "stale";
+      return c;
+    };
+    const refreshStatus = () => {
+      const c = calibOk();
+      if (c === null) {
+        stEl.innerHTML = '⚠ Brak kalibracji — wybierz pokój i zaznacz go na mapie:';
+        mode = "calib";
+      } else if (c === "stale") {
+        stEl.innerHTML = '⚠ Mapa zmieniła rozmiar — skalibruj ponownie:';
+        mode = "calib";
+      } else {
+        stEl.innerHTML = 'Kalibracja ✓ — narysuj strefę przeciągnięciem.';
+        if (mode === "calib") mode = "zone";
+      }
+    };
+    img.onload = refreshStatus;
+    refreshStatus();
+
+    box.querySelector('[data-x="calib"]').onclick = () => {
+      mode = "calib";
+      stEl.innerHTML = '▭ Zaznacz prostokątem pokój: <b>' +
+        esc(box.querySelector(".zroom").value) + "</b>";
+    };
+
+    const toNat = (x, y) => {
+      const f = img.naturalWidth / img.clientWidth;
+      return [x * f, y * f];
+    };
+    const toMm = (nx, ny) => {
+      const c = loadCalib();
+      const r = (v) => Math.round(v / 10) * 10;
+      return [r(c.ax * nx + c.bx), r(c.ay * ny + c.by)];
+    };
+    const pos = (e) => {
+      const r = zwrap.getBoundingClientRect();
+      return [Math.max(0, Math.min(e.clientX - r.left, r.width)),
+              Math.max(0, Math.min(e.clientY - r.top, r.height))];
+    };
+    zwrap.addEventListener("pointerdown", (e) => {
+      e.preventDefault();
+      start = pos(e);
+      zwrap.setPointerCapture(e.pointerId);
+    });
+    zwrap.addEventListener("pointermove", (e) => {
+      if (!start) return;
+      const [x, y] = pos(e);
+      const L = Math.min(start[0], x), T = Math.min(start[1], y);
+      rectEl.style.left = L + "px";
+      rectEl.style.top = T + "px";
+      rectEl.style.width = Math.abs(x - start[0]) + "px";
+      rectEl.style.height = Math.abs(y - start[1]) + "px";
+      rectEl.style.display = "block";
+      if (mode === "zone" && calibOk() && calibOk() !== "stale") {
+        const [x1, y1] = toMm(...toNat(L, T));
+        const [x2, y2] = toMm(...toNat(L + Math.abs(x - start[0]), T + Math.abs(y - start[1])));
+        info.textContent = `[${Math.min(x1, x2)}, ${Math.min(y1, y2)}, ${Math.max(x1, x2)}, ${Math.max(y1, y2)}] · ` +
+          `${(Math.abs(x2 - x1) / 1000).toFixed(1)} × ${(Math.abs(y2 - y1) / 1000).toFixed(1)} m`;
+      }
+    });
+    zwrap.addEventListener("pointerup", (e) => {
+      if (!start) return;
+      const [x, y] = pos(e);
+      const L = Math.min(start[0], x), T = Math.min(start[1], y);
+      const W = Math.abs(x - start[0]), H = Math.abs(y - start[1]);
+      start = null;
+      if (W < 6 || H < 6) { rectEl.style.display = "none"; return; }
+      const [nL, nT] = toNat(L, T);
+      const [nR, nB] = toNat(L + W, T + H);
+      if (mode === "calib") {
+        const room = box.querySelector(".zroom").value;
+        const z = zones[room];
+        if (!z) return;
+        const vxmin = Math.min(z[0], z[2]), vxmax = Math.max(z[0], z[2]);
+        const vymin = Math.min(z[1], z[3]), vymax = Math.max(z[1], z[3]);
+        // os Y odkurzacza rosnie do gory ekranu (Dreame) — flip
+        const ax = (vxmax - vxmin) / (nR - nL);
+        const ay = (vymin - vymax) / (nB - nT);
+        localStorage.setItem("dzq-map-calib", JSON.stringify({
+          ax, bx: vxmin - ax * nL,
+          ay, by: vymax - ay * nT,
+          iw: img.naturalWidth, ih: img.naturalHeight,
+        }));
+        rectEl.style.display = "none";
+        this._toast("✓ Kalibracja zapisana — teraz narysuj strefę");
+        mode = "zone";
+        refreshStatus();
+        return;
+      }
+      if (!calibOk() || calibOk() === "stale") return;
+      const [x1, y1] = toMm(nL, nT);
+      const [x2, y2] = toMm(nR, nB);
+      zoneMm = [Math.min(x1, x2), Math.min(y1, y2), Math.max(x1, x2), Math.max(y1, y2)];
+      const wMm = zoneMm[2] - zoneMm[0], hMm = zoneMm[3] - zoneMm[1];
+      if (wMm < 120 || hMm < 120) {
+        info.textContent = "⚠ Strefa za mała (min 120 mm na bok) — narysuj większą.";
+        zoneMm = null;
+        okBtn.disabled = true;
+        okBtn.style.opacity = ".5";
+        return;
+      }
+      info.textContent = `Strefa: [${zoneMm.join(", ")}] · ` +
+        `${(wMm / 1000).toFixed(1)} × ${(hMm / 1000).toFixed(1)} m`;
+      okBtn.disabled = false;
+      okBtn.style.opacity = "1";
+    });
+
+    okBtn.onclick = () => {
+      if (!zoneMm) return;
+      this._call("add", {
+        room: box.querySelector(".zname").value.trim() || "Strefa",
+        zone: zoneMm,
+        suction: box.querySelector(".zsuction").value,
+        water: box.querySelector(".zwater").value,
+        repeats: Number(box.querySelector(".zrepeats").value),
+      });
+      close();
+      this._toast("✓ Strefa dodana do kolejki");
+    };
+  }
   _toast(msg) {
     document.querySelectorAll(".dzq-toast").forEach((t) => t.remove());
     const el = document.createElement("div");
@@ -680,6 +892,7 @@ class VacuumQueueCard extends HTMLElement {
           <div class="addrow">
           <select id="addRoom">${rooms.map((r) => `<option value="${r}">${ric(r)}${r}</option>`).join("")}</select>
           <button class="btn" id="add" ${rooms.length ? "" : "disabled"}>+ Dodaj</button>
+          <button class="btn" id="zoneAdd" title="Narysuj jednorazow\u0105 stref\u0119 na mapie">\u25AD W\u0142asna strefa</button>
           </div>
         </div>` : ""}
         ${c.show_bulk_edit && !ro && items.some((i) => i.status === "pending") ? `<div class="sec">
@@ -738,6 +951,7 @@ class VacuumQueueCard extends HTMLElement {
     arm("stop", () => this._call("stop"));
     arm("clear", () => this._call("clear"));
     on("add", () => this._call("add", { room: root.getElementById("addRoom").value }));
+    on("zoneAdd", () => this._zoneDialog());
     const setBulkMode = (m) => {
       this._bulkMode = m;
       if (m === "all") this._sel.clear();

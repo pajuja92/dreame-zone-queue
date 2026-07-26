@@ -4,6 +4,30 @@ Wszystkie istotne zmiany w projekcie. Format oparty o
 [Keep a Changelog](https://keepachangelog.com/pl/1.1.0/),
 wersjonowanie zgodne z [SemVer](https://semver.org/lang/pl/).
 
+## [2.0.0-beta.15] - 2026-07-26
+
+### Dodane — własne strefy rysowane na mapie
+- **Przycisk „▭ Własna strefa"** w sekcji „Dodaj pokój" karty kolejki:
+  otwiera modal z żywą mapą z kamery robota (`camera.<robot>_map`,
+  zmienialne przez `map_camera` w konfiguracji karty), na której
+  rysuje się strefę przeciągnięciem — na wzór kalibratora pokoi.
+- **Jednorazowa kalibracja po znanym pokoju**: wybierz zdefiniowany
+  pokój z listy i zaznacz go prostokątem na mapie — przelicznik
+  px→mm (z odwróconą osią Y Dreame) zapisuje się w przeglądarce.
+  Przy zmianie rozmiaru mapy modal poprosi o ponowną kalibrację.
+- Rysowana strefa pokazuje na żywo współrzędne i wymiary w metrach;
+  nazwa, ssanie, mop i przejazdy do ustawienia przed dodaniem.
+  Strefy węższe niż 120 mm (limit robota) są odrzucane.
+- **Strefa jest elementem tylko tej kolejki** — nie zapisuje się do
+  pokojów w opcjach integracji; znika z listy jak każdy inny wpis.
+  Serwis `dreame_zone_queue.add` przyjmuje nowe pole
+  `zone: [x1, y1, x2, y2]` (mm), a sensor wystawia `room_zones`
+  (strefy zdefiniowanych pokoi do kalibracji).
+
+### Testy
+- Scenariusz strefy niestandardowej: normalizacja współrzędnych,
+  odrzucenie za małej strefy, dispatch z własną strefą (39 łącznie).
+
 ## [2.0.0-beta.14] - 2026-07-24
 
 ### Dodane

@@ -17,6 +17,14 @@ add:
     repeats:
       name: Repeats
       selector: {number: {min: 1, max: 3, mode: box}}
+    zone:
+      name: Custom zone
+      description: >
+        Ad-hoc zone [x1, y1, x2, y2] in vacuum mm coordinates. When given,
+        "room" is just a display name and the item lives only in this queue
+        (it is not saved to the room definitions).
+      example: "[-400, -3500, 2300, -600]"
+      selector: {object: {}}
 remove:
   name: Remove item
   description: Removes an item from the queue (by item_id or 1-based position).

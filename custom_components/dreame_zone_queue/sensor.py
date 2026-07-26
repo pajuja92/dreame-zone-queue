@@ -58,6 +58,7 @@ class QueueSensor(SensorEntity):
             "items": snap["items"],
             "rooms": snap["rooms"],
             "room_icons": snap["room_icons"],
+            "room_zones": snap["room_zones"],
             "progress": snap["progress"],
             "eta_s": snap["eta_s"],
             "presets": snap["presets"],

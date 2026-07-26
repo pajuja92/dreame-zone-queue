@@ -772,6 +772,26 @@ async def test_history_records_side_events_with_duration():
     assert 115 <= ev[0]["dur"] <= 125
 
 
+async def test_add_custom_zone():
+    hass, m = mk()
+    await m.async_setup()
+    # wspolrzedne w dowolnej kolejnosci -> normalizacja do min/max
+    await m.async_add("Pod stołem", zone=[2300, -600, -400, -3500],
+                      water="wet", repeats=2)
+    item = m.queue[0]
+    assert item["custom"] and item["zone"] == [-400, -3500, 2300, -600]
+    assert item["room"] == "Pod stołem" and item["water"] == "wet"
+    assert item["repeats"] == 2 and item["suction"] == "standard"
+    # za mala strefa -> odrzucona z powiadomieniem
+    await m.async_add("Mini", zone=[0, 0, 100, 100])
+    assert len(m.queue) == 1
+    assert any("za mała" in n for n in NOTIFICATIONS)
+    # dispatch uzywa strefy z itemu
+    hass.states[VAC] = st("docked", **TASK_DONE)
+    await m.async_start()
+    assert zone_calls(hass)[0][2]["zone"] == [[-400, -3500, 2300, -600]]
+
+
 async def test_current_run_reflects_active_room():
     hass, m = mk()
     await m.async_setup()

@@ -29,6 +29,7 @@ from .const import (
     DEFAULT_GRACE_S,
     FEEDBACK_LOG,
     HISTORY_MAX_RUNS,
+    MIN_ZONE_MM,
     FEEDBACK_LOGGER,
     SIGNAL_QUEUE_UPDATED,
     ABANDON_S,
@@ -374,8 +375,41 @@ class QueueManager:
     # ------------------------------------------------------------------
     # public queue operations (services / buttons / card)
     # ------------------------------------------------------------------
-    async def async_add(self, room: str, suction=None, water=None, repeats=None) -> None:
-        _LOGGER.warning("DZQ_ACTION | ADD | room=%s suction=%s water=%s repeats=%s", room, suction, water, repeats)
+    async def async_add(self, room: str, suction=None, water=None,
+                        repeats=None, zone=None) -> None:
+        _LOGGER.warning("DZQ_ACTION | ADD | room=%s suction=%s water=%s repeats=%s zone=%s", room, suction, water, repeats, zone)
+        if zone is not None:
+            # strefa niestandardowa (narysowana na mapie) — zyje tylko jako
+            # element TEJ kolejki, nie zapisuje sie do pokojow w opcjach
+            try:
+                x1, y1, x2, y2 = (int(round(float(v))) for v in zone)
+            except (TypeError, ValueError):
+                _LOGGER.error("Invalid custom zone: %s", zone)
+                return
+            zone = [min(x1, x2), min(y1, y2), max(x1, x2), max(y1, y2)]
+            if (zone[2] - zone[0] < MIN_ZONE_MM
+                    or zone[3] - zone[1] < MIN_ZONE_MM):
+                _LOGGER.error("Custom zone too small: %s", zone)
+                self._user_notify(
+                    f"Strefa za mała — robot odrzuca strefy węższe niż "
+                    f"{MIN_ZONE_MM} mm.")
+                return
+            self.queue.append(
+                {
+                    "id": self._next_id,
+                    "room": (room or "").strip() or f"Strefa {self._next_id}",
+                    "icon": "mdi:selection-drag",
+                    "zone": zone,
+                    "custom": True,
+                    "suction": suction or "standard",
+                    "water": water or "off",
+                    "repeats": int(repeats or 1),
+                    "status": STATUS_PENDING,
+                }
+            )
+            self._next_id += 1
+            self._notify()
+            return
         base = self.rooms.get(room)
         if base is None:
             _LOGGER.error("Unknown room '%s' — define it in the integration options", room)
@@ -1725,6 +1759,9 @@ class QueueManager:
                       for i in self.queue],
             "rooms": sorted(self.rooms.keys()),
             "room_icons": {n: r.get("icon", "") for n, r in self.rooms.items()},
+            # strefy pokojow — kalibracja mapy w oknie "Wlasna strefa"
+            "room_zones": {n: list(r["zone"]) for n, r in self.rooms.items()
+                           if r.get("zone")},
             "count_pending": sum(1 for i in self.queue if i["status"] == STATUS_PENDING),
             "vacuum_entity": self.vacuum_entity,
             "feedback": self.feedback,

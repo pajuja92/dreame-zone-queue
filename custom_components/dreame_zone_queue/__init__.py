@@ -51,6 +51,10 @@ SCHEMA_ADD = vol.Schema(
         vol.Optional(ATTR_SUCTION): vol.In(SUCTION_LEVELS),
         vol.Optional(ATTR_WATER): vol.In(WATER_LEVELS),
         vol.Optional(ATTR_REPEATS): vol.Coerce(int),
+        # strefa niestandardowa [x1, y1, x2, y2] w mm — element tylko tej kolejki
+        vol.Optional("zone"): vol.All(
+            cv.ensure_list, [vol.Coerce(float)], vol.Length(min=4, max=4)
+        ),
     }
 )
 SCHEMA_ITEM = vol.Schema(
