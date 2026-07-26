@@ -315,6 +315,10 @@ class VacuumQueueCard extends HTMLElement {
   /* Modal "Wlasna strefa": mapa z kamery robota + kalibracja po znanym
    * pokoju (funkcjonalnosc kalibratora pokoi) + rysowanie prostokata.
    * Kalibracja px->mm trzymana w localStorage (dzq-map-calib). */
+  /* Modal "Wlasna strefa": rysowanie jednorazowej powierzchni na mapie
+   * z kamery robota — prostokat (przeciagniecie) lub wielokat (min. 3
+   * punkty, robot dostaje prostokat obejmujacy). Kalibracja px->mm
+   * pochodzi z integracji (panel Zone Queue -> Kalibracja mapy). */
   _zoneDialog() {
     if (document.querySelector(".dzq-zone-modal")) return;
     const hass = this._hass;
@@ -324,8 +328,7 @@ class VacuumQueueCard extends HTMLElement {
     const camEnt = this._config.map_camera
       || ("camera." + (vac.split(".")[1] || "") + "_map");
     const cam = hass.states[camEnt];
-    const zones = attrs.room_zones || {};
-    const roomNames = Object.keys(zones).sort();
+    const calib = attrs.map_calib || null;
     const esc = (t) => String(t).replace(/&/g, "&amp;").replace(/</g, "&lt;");
 
     const wrap = document.createElement("div");
@@ -343,27 +346,33 @@ class VacuumQueueCard extends HTMLElement {
       "border:1px solid var(--divider-color,#444);" +
       "background:var(--primary-background-color,#111);color:inherit";
     const btnCss = "font:inherit;padding:8px 14px;border-radius:10px;border:none;cursor:pointer;";
-    if (!cam) {
+    const closeOnly = (msg) => {
       box.innerHTML = `<h3 style="margin:0">▭ Własna strefa</h3>
-        <div>Nie znalazłem kamery mapy (<code>${esc(camEnt)}</code>).
-        Ustaw <code>map_camera</code> w konfiguracji karty.</div>
+        <div style="line-height:1.5">${msg}</div>
         <div style="display:flex;justify-content:flex-end"><button data-x="close"
           style="${btnCss}background:var(--secondary-background-color,#333);color:inherit">Zamknij</button></div>`;
+    };
+    if (!cam) {
+      closeOnly(`Nie znalazłem kamery mapy (<code>${esc(camEnt)}</code>).
+        Ustaw <code>map_camera</code> w konfiguracji karty.`);
+    } else if (!calib) {
+      closeOnly(`Brak kalibracji mapy. Otwórz panel <b>Zone Queue</b>
+        (menu boczne) → zakładka <b>🎯 Kalibracja mapy</b> i obrysuj tam
+        jeden znany pokój — wystarczy raz.`);
     } else {
       const pic = cam.attributes.entity_picture || "";
       box.innerHTML = `
         <h3 style="margin:0;font-size:1.05em">▭ Własna strefa — narysuj na mapie</h3>
-        <div class="zcal" style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;font-size:.9em">
-          <span class="zst"></span>
-          <select class="zroom" style="${selCss}">${roomNames.map((r) =>
-            `<option value="${esc(r)}">${esc(r)}</option>`).join("")}</select>
-          <button data-x="calib" style="${btnCss}background:var(--secondary-background-color,#333);color:inherit">▭ Zaznacz ten pokój (kalibracja)</button>
+        <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;font-size:.9em">
+          <button data-x="mrect" style="${btnCss}background:var(--primary-color,#03a9f4);color:#fff">▭ Prostokąt</button>
+          <button data-x="mpoly" style="${btnCss}background:var(--secondary-background-color,#333);color:inherit">△ Wielokąt</button>
+          <button data-x="mclear" style="${btnCss}background:var(--secondary-background-color,#333);color:inherit">Wyczyść</button>
+          <span class="zhint" style="color:var(--secondary-text-color)"></span>
         </div>
         <div class="zwrap" style="position:relative;user-select:none;touch-action:none;line-height:0">
           <img class="zimg" src="${pic}" draggable="false"
             style="width:100%;border-radius:10px;display:block">
-          <div class="zrect" style="position:absolute;display:none;border:2px solid #ffb84d;
-            background:rgba(255,184,77,.18);pointer-events:none;border-radius:3px"></div>
+          <svg class="zsvg" style="position:absolute;inset:0;width:100%;height:100%;pointer-events:none"></svg>
         </div>
         <div class="zinfo" style="font-size:.9em;color:var(--secondary-text-color)"></div>
         <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap">
@@ -377,6 +386,7 @@ class VacuumQueueCard extends HTMLElement {
         </div>
         <div style="display:flex;justify-content:flex-end;gap:8px">
           <button data-x="close" style="${btnCss}background:var(--secondary-background-color,#333);color:inherit">Anuluj</button>
+          <button data-x="done" style="${btnCss}background:var(--secondary-background-color,#333);color:inherit;display:none">✓ Zakończ kształt</button>
           <button data-x="ok" disabled style="${btnCss}font-weight:600;background:var(--primary-color,#03a9f4);color:#fff;opacity:.5">+ Dodaj do kolejki</button>
         </div>`;
     }
@@ -385,119 +395,98 @@ class VacuumQueueCard extends HTMLElement {
     const close = () => wrap.remove();
     wrap.addEventListener("click", (e) => { if (e.target === wrap) close(); });
     box.querySelector('[data-x="close"]').onclick = close;
-    if (!cam) return;
+    if (!cam || !calib) return;
 
     const img = box.querySelector(".zimg");
     const zwrap = box.querySelector(".zwrap");
-    const rectEl = box.querySelector(".zrect");
+    const svg = box.querySelector(".zsvg");
     const info = box.querySelector(".zinfo");
-    const stEl = box.querySelector(".zst");
+    const hint = box.querySelector(".zhint");
     const okBtn = box.querySelector('[data-x="ok"]');
-    let mode = "zone";       // "zone" | "calib"
-    let start = null;        // [x,y] w px wyswietlanych
-    let zoneMm = null;       // [x1,y1,x2,y2] wynik
+    const doneBtn = box.querySelector('[data-x="done"]');
+    const mrect = box.querySelector('[data-x="mrect"]');
+    const mpoly = box.querySelector('[data-x="mpoly"]');
+    let mode = "rect";       // "rect" | "poly"
+    let start = null;        // drag start (rect)
+    let drag = null;         // aktualny prostokat [L,T,W,H]
+    let pts = [];            // punkty wielokata (px wyswietlane)
+    let zoneMm = null;       // wynik [x1,y1,x2,y2]
 
-    const loadCalib = () => {
-      try { return JSON.parse(localStorage.getItem("dzq-map-calib")); }
-      catch (e) { return null; }
-    };
-    const calibOk = () => {
-      const c = loadCalib();
-      if (!c) return null;
-      if (img.naturalWidth && c.iw && Math.abs(c.iw - img.naturalWidth) > 1) return "stale";
-      return c;
-    };
-    const refreshStatus = () => {
-      const c = calibOk();
-      if (c === null) {
-        stEl.innerHTML = '⚠ Brak kalibracji — wybierz pokój i zaznacz go na mapie:';
-        mode = "calib";
-      } else if (c === "stale") {
-        stEl.innerHTML = '⚠ Mapa zmieniła rozmiar — skalibruj ponownie:';
-        mode = "calib";
+    const staleCalib = () =>
+      img.naturalWidth && calib.iw && Math.abs(calib.iw - img.naturalWidth) > 1;
+    const refreshHint = () => {
+      if (staleCalib()) {
+        hint.textContent = "⚠ Mapa zmieniła rozmiar — ponów kalibrację w panelu Zone Queue.";
       } else {
-        stEl.innerHTML = 'Kalibracja ✓ — narysuj strefę przeciągnięciem.';
-        if (mode === "calib") mode = "zone";
+        hint.textContent = mode === "rect"
+          ? "Przeciągnij prostokąt po mapie."
+          : "Klikaj narożniki (min. 3), zakończ dwuklikiem lub „Zakończ kształt”.";
       }
     };
-    img.onload = refreshStatus;
-    refreshStatus();
+    img.onload = refreshHint;
+    refreshHint();
 
-    box.querySelector('[data-x="calib"]').onclick = () => {
-      mode = "calib";
-      stEl.innerHTML = '▭ Zaznacz prostokątem pokój: <b>' +
-        esc(box.querySelector(".zroom").value) + "</b>";
+    const setMode = (m) => {
+      mode = m;
+      mrect.style.background = m === "rect" ? "var(--primary-color,#03a9f4)" : "var(--secondary-background-color,#333)";
+      mrect.style.color = m === "rect" ? "#fff" : "inherit";
+      mpoly.style.background = m === "poly" ? "var(--primary-color,#03a9f4)" : "var(--secondary-background-color,#333)";
+      mpoly.style.color = m === "poly" ? "#fff" : "inherit";
+      doneBtn.style.display = m === "poly" ? "" : "none";
+      clearShape();
+      refreshHint();
     };
+    const clearShape = () => {
+      pts = [];
+      drag = null;
+      start = null;
+      zoneMm = null;
+      svg.innerHTML = "";
+      info.textContent = "";
+      okBtn.disabled = true;
+      okBtn.style.opacity = ".5";
+    };
+    mrect.onclick = () => setMode("rect");
+    mpoly.onclick = () => setMode("poly");
+    box.querySelector('[data-x="mclear"]').onclick = clearShape;
 
     const toNat = (x, y) => {
       const f = img.naturalWidth / img.clientWidth;
       return [x * f, y * f];
     };
     const toMm = (nx, ny) => {
-      const c = loadCalib();
       const r = (v) => Math.round(v / 10) * 10;
-      return [r(c.ax * nx + c.bx), r(c.ay * ny + c.by)];
+      return [r(calib.ax * nx + calib.bx), r(calib.ay * ny + calib.by)];
     };
     const pos = (e) => {
       const r = zwrap.getBoundingClientRect();
       return [Math.max(0, Math.min(e.clientX - r.left, r.width)),
               Math.max(0, Math.min(e.clientY - r.top, r.height))];
     };
-    zwrap.addEventListener("pointerdown", (e) => {
-      e.preventDefault();
-      start = pos(e);
-      zwrap.setPointerCapture(e.pointerId);
-    });
-    zwrap.addEventListener("pointermove", (e) => {
-      if (!start) return;
-      const [x, y] = pos(e);
-      const L = Math.min(start[0], x), T = Math.min(start[1], y);
-      rectEl.style.left = L + "px";
-      rectEl.style.top = T + "px";
-      rectEl.style.width = Math.abs(x - start[0]) + "px";
-      rectEl.style.height = Math.abs(y - start[1]) + "px";
-      rectEl.style.display = "block";
-      if (mode === "zone" && calibOk() && calibOk() !== "stale") {
-        const [x1, y1] = toMm(...toNat(L, T));
-        const [x2, y2] = toMm(...toNat(L + Math.abs(x - start[0]), T + Math.abs(y - start[1])));
-        info.textContent = `[${Math.min(x1, x2)}, ${Math.min(y1, y2)}, ${Math.max(x1, x2)}, ${Math.max(y1, y2)}] · ` +
-          `${(Math.abs(x2 - x1) / 1000).toFixed(1)} × ${(Math.abs(y2 - y1) / 1000).toFixed(1)} m`;
+    const redraw = () => {
+      let html = "";
+      if (drag) {
+        html += `<rect x="${drag[0]}" y="${drag[1]}" width="${drag[2]}" height="${drag[3]}"
+          fill="rgba(255,184,77,.18)" stroke="#ffb84d" stroke-width="2" rx="3"/>`;
       }
-    });
-    zwrap.addEventListener("pointerup", (e) => {
-      if (!start) return;
-      const [x, y] = pos(e);
-      const L = Math.min(start[0], x), T = Math.min(start[1], y);
-      const W = Math.abs(x - start[0]), H = Math.abs(y - start[1]);
-      start = null;
-      if (W < 6 || H < 6) { rectEl.style.display = "none"; return; }
-      const [nL, nT] = toNat(L, T);
-      const [nR, nB] = toNat(L + W, T + H);
-      if (mode === "calib") {
-        const room = box.querySelector(".zroom").value;
-        const z = zones[room];
-        if (!z) return;
-        const vxmin = Math.min(z[0], z[2]), vxmax = Math.max(z[0], z[2]);
-        const vymin = Math.min(z[1], z[3]), vymax = Math.max(z[1], z[3]);
-        // os Y odkurzacza rosnie do gory ekranu (Dreame) — flip
-        const ax = (vxmax - vxmin) / (nR - nL);
-        const ay = (vymin - vymax) / (nB - nT);
-        localStorage.setItem("dzq-map-calib", JSON.stringify({
-          ax, bx: vxmin - ax * nL,
-          ay, by: vymax - ay * nT,
-          iw: img.naturalWidth, ih: img.naturalHeight,
-        }));
-        rectEl.style.display = "none";
-        this._toast("✓ Kalibracja zapisana — teraz narysuj strefę");
-        mode = "zone";
-        refreshStatus();
-        return;
+      if (pts.length) {
+        const ptStr = pts.map((p) => p.join(",")).join(" ");
+        html += pts.length > 2
+          ? `<polygon points="${ptStr}" fill="rgba(255,184,77,.18)" stroke="#ffb84d" stroke-width="2"/>`
+          : `<polyline points="${ptStr}" fill="none" stroke="#ffb84d" stroke-width="2"/>`;
+        html += pts.map((p) =>
+          `<circle cx="${p[0]}" cy="${p[1]}" r="4" fill="#ffb84d"/>`).join("");
       }
-      if (!calibOk() || calibOk() === "stale") return;
-      const [x1, y1] = toMm(nL, nT);
-      const [x2, y2] = toMm(nR, nB);
-      zoneMm = [Math.min(x1, x2), Math.min(y1, y2), Math.max(x1, x2), Math.max(y1, y2)];
-      const wMm = zoneMm[2] - zoneMm[0], hMm = zoneMm[3] - zoneMm[1];
+      svg.innerHTML = html;
+    };
+    const bboxToMm = (dispPts) => {
+      const nat = dispPts.map((p) => toNat(p[0], p[1]));
+      const mm = nat.map((p) => toMm(p[0], p[1]));
+      const xs = mm.map((p) => p[0]), ys = mm.map((p) => p[1]);
+      return [Math.min(...xs), Math.min(...ys), Math.max(...xs), Math.max(...ys)];
+    };
+    const acceptZone = (z, note) => {
+      const wMm = z[2] - z[0], hMm = z[3] - z[1];
       if (wMm < 120 || hMm < 120) {
         info.textContent = "⚠ Strefa za mała (min 120 mm na bok) — narysuj większą.";
         zoneMm = null;
@@ -505,10 +494,54 @@ class VacuumQueueCard extends HTMLElement {
         okBtn.style.opacity = ".5";
         return;
       }
-      info.textContent = `Strefa: [${zoneMm.join(", ")}] · ` +
-        `${(wMm / 1000).toFixed(1)} × ${(hMm / 1000).toFixed(1)} m`;
+      zoneMm = z;
+      info.textContent = `Strefa: [${z.join(", ")}] · ` +
+        `${(wMm / 1000).toFixed(1)} × ${(hMm / 1000).toFixed(1)} m${note || ""}`;
       okBtn.disabled = false;
       okBtn.style.opacity = "1";
+    };
+    const finishPoly = () => {
+      if (pts.length < 3) {
+        info.textContent = "⚠ Wielokąt wymaga min. 3 punktów.";
+        return;
+      }
+      redraw();
+      acceptZone(bboxToMm(pts), " · (prostokąt obejmujący wielokąt)");
+    };
+    doneBtn.onclick = finishPoly;
+    zwrap.addEventListener("dblclick", () => { if (mode === "poly") finishPoly(); });
+
+    zwrap.addEventListener("pointerdown", (e) => {
+      if (staleCalib()) return;
+      e.preventDefault();
+      if (mode === "rect") {
+        start = pos(e);
+        zwrap.setPointerCapture(e.pointerId);
+      }
+    });
+    zwrap.addEventListener("pointermove", (e) => {
+      if (mode !== "rect" || !start) return;
+      const [x, y] = pos(e);
+      drag = [Math.min(start[0], x), Math.min(start[1], y),
+              Math.abs(x - start[0]), Math.abs(y - start[1])];
+      redraw();
+    });
+    zwrap.addEventListener("pointerup", (e) => {
+      if (staleCalib()) return;
+      const [x, y] = pos(e);
+      if (mode === "poly") {
+        pts.push([x, y]);
+        redraw();
+        return;
+      }
+      if (!start) return;
+      const L = Math.min(start[0], x), T = Math.min(start[1], y);
+      const W = Math.abs(x - start[0]), H = Math.abs(y - start[1]);
+      start = null;
+      if (W < 6 || H < 6) { drag = null; redraw(); return; }
+      drag = [L, T, W, H];
+      redraw();
+      acceptZone(bboxToMm([[L, T], [L + W, T + H]]));
     });
 
     okBtn.onclick = () => {

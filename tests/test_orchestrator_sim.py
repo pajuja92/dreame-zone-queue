@@ -772,6 +772,25 @@ async def test_history_records_side_events_with_duration():
     assert 115 <= ev[0]["dur"] <= 125
 
 
+async def test_map_calib_persisted():
+    hass, m = mk()
+    await m.async_setup()
+    calib = {"ax": 12.5, "bx": -6000, "ay": -12.5, "by": 5000,
+             "iw": 800, "ih": 600}
+    await m.async_set_map_calib(calib)
+    assert m.snapshot["map_calib"]["ax"] == 12.5
+    hass2, m2 = await _restart(m)
+    await m2.async_setup()
+    assert m2.map_calib == calib  # przezywa restart (Store)
+    await m2.async_set_map_calib(None)
+    assert m2.map_calib is None
+    try:
+        await m2.async_set_map_calib({"ax": 1})  # brak kluczy
+        raise AssertionError("should have raised")
+    except ValueError:
+        pass
+
+
 async def test_add_custom_zone():
     hass, m = mk()
     await m.async_setup()

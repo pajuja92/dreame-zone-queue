@@ -1,8 +1,8 @@
-/* Panel boczny "Zone Queue Logi" — podgląd dziennika feedbacku
- * (/config/dreame_zone_queue_feedback.log) bez grzebania w logach HA Core.
- *
- * Plik na dysku jest ZAWSZE pełny; widok/pobranie "diff" liczy różnice
- * między kolejnymi zrzutami attrs w locie (klucze usunięte → "_removed"). */
+/* Panel boczny "Zone Queue" — dwie zakładki:
+ *  · Logi — dziennik feedbacku (/config/dreame_zone_queue_feedback.log);
+ *    plik na dysku ZAWSZE pełny, widok/pobranie "diff" liczy różnice w locie.
+ *  · Kalibracja mapy — przelicznik px→mm dla rysowania własnych stref
+ *    (zapis po stronie integracji: POST /api/dreame_zone_queue/map_calib). */
 
 class DzqFeedbackPanel extends HTMLElement {
   set hass(hass) {
@@ -20,6 +20,7 @@ class DzqFeedbackPanel extends HTMLElement {
   _build() {
     this._built = true;
     this._tagSel = {}; // tag -> bool (nowe tagi domyślnie włączone)
+    this._view = "logs";
     this.attachShadow({ mode: "open" });
     this.shadowRoot.innerHTML = `
       <style>
@@ -27,7 +28,8 @@ class DzqFeedbackPanel extends HTMLElement {
         .top { display: flex; align-items: center; gap: 8px; padding: 10px 16px;
                background: var(--app-header-background-color, var(--primary-color));
                color: var(--app-header-text-color, #fff); flex-wrap: wrap; }
-        .top h1 { font-size: 1.1em; margin: 0; font-weight: 500; flex: 1; min-width: 160px; }
+        .top h1 { font-size: 1.1em; margin: 0; font-weight: 500; }
+        .top .sp { flex: 1; }
         .top input, .top select { padding: 6px 10px; border-radius: 8px; border: none; font: inherit; }
         .top input[type="datetime-local"] { min-width: 150px; }
         #filter { min-width: 130px; }
@@ -36,6 +38,9 @@ class DzqFeedbackPanel extends HTMLElement {
                font: inherit; display: inline-flex; align-items: center; gap: 6px; }
         .top button:hover { background: rgba(255,255,255,.25); }
         .top button.warn { background: rgba(255,120,0,.55); }
+        .top button.tab { border: 1px solid rgba(255,255,255,.4); }
+        .top button.tab.on { background: rgba(255,255,255,.9);
+               color: var(--app-header-background-color, var(--primary-color)); font-weight: 600; }
         .tags { display: flex; gap: 6px; padding: 8px 16px 0; flex-wrap: wrap; }
         .tags label { display: inline-flex; align-items: center; gap: 4px;
                background: var(--card-background-color); color: var(--primary-text-color);
@@ -49,7 +54,7 @@ class DzqFeedbackPanel extends HTMLElement {
               background: var(--card-background-color); color: var(--primary-text-color);
               font: 12.5px/1.55 ui-monospace, SFMono-Regular, Menlo, monospace;
               white-space: pre-wrap; word-break: break-word;
-              overflow-y: auto; height: calc(100vh - 230px); }
+              overflow-y: auto; height: calc(100vh - 250px); }
         .note-line { color: var(--warning-color, #ff9800); font-weight: 700; }
         .dec-line { color: var(--primary-color); }
         .act-line { color: var(--success-color, #0a2); }
@@ -66,33 +71,64 @@ class DzqFeedbackPanel extends HTMLElement {
         .toast { position: fixed; bottom: 24px; left: 50%; transform: translateX(-50%);
               background: var(--primary-color); color: #fff; padding: 10px 18px;
               border-radius: 10px; z-index: 9; box-shadow: 0 4px 16px rgba(0,0,0,.3); }
+        /* — kalibracja — */
+        #vCalib { padding: 14px 16px; max-width: 980px; }
+        .cbar { display: flex; gap: 8px; align-items: center; flex-wrap: wrap;
+              margin-bottom: 10px; color: var(--primary-text-color); }
+        .cbar select, .cbar button { font: inherit; padding: 7px 12px; border-radius: 8px;
+              border: 1px solid var(--divider-color); cursor: pointer;
+              background: var(--card-background-color); color: var(--primary-text-color); }
+        .cbar button.primary { background: var(--primary-color); color: #fff; border: none; }
+        .cbar button.danger { color: var(--error-color, #d33); }
+        .cst-ok { color: var(--success-color, #0a2); font-weight: 600; }
+        .cst-bad { color: var(--warning-color, #ff9800); font-weight: 600; }
+        .cwrap { position: relative; user-select: none; touch-action: none; line-height: 0; }
+        .cwrap img { width: 100%; border-radius: 10px; display: block; }
+        .crect { position: absolute; display: none; border: 2px solid #ffb84d;
+              background: rgba(255,184,77,.18); border-radius: 3px; pointer-events: none; }
+        .cbadge { position: absolute; display: none; transform: translate(12px, 12px);
+              background: rgba(13,16,21,.92); border: 1px solid #ffb84d; color: #ffb84d;
+              font: 12px ui-monospace, Menlo, monospace; padding: 3px 8px;
+              border-radius: 6px; pointer-events: none; white-space: nowrap; z-index: 3; }
+        .chint { margin-top: 10px; font-size: .85em; color: var(--secondary-text-color);
+              line-height: 1.5; }
       </style>
       <div class="top">
-        <h1>🧹 Zone Queue — dziennik feedbacku</h1>
-        <input id="filter" placeholder="filtr tekstu">
-        <input id="tfrom" type="datetime-local" title="od kiedy">
-        <input id="tto" type="datetime-local" title="do kiedy">
-        <select id="mode" title="tryb widoku">
-          <option value="full">Pełny</option>
-          <option value="diff">Diff</option>
-        </select>
-        <button id="expand" title="rozwiń wszystkie attrs">▾ Rozwiń</button>
-        <button id="collapse" title="zwiń wszystkie attrs">▸ Zwiń</button>
-        <label class="chk"><input type="checkbox" id="auto" checked> auto 5 s</label>
-        <button id="refresh">⟳ Odśwież</button>
-        <button id="download">⬇ Pobierz</button>
-        <button id="downdiff">⬇ Pobierz diff</button>
-        <button id="archive" class="warn">🗄 Archiwizuj</button>
+        <h1>🧹 Zone Queue</h1>
+        <button class="tab on" id="tabLogs">Logi</button>
+        <button class="tab" id="tabCalib">🎯 Kalibracja mapy</button>
+        <span class="sp"></span>
+        <span id="logCtl" style="display:contents">
+          <input id="filter" placeholder="filtr tekstu">
+          <input id="tfrom" type="datetime-local" title="od kiedy">
+          <input id="tto" type="datetime-local" title="do kiedy">
+          <select id="mode" title="tryb widoku">
+            <option value="full">Pełny</option>
+            <option value="diff">Diff</option>
+          </select>
+          <button id="expand" title="rozwiń wszystkie attrs">▾ Rozwiń</button>
+          <button id="collapse" title="zwiń wszystkie attrs">▸ Zwiń</button>
+          <label class="chk"><input type="checkbox" id="auto" checked> auto 5 s</label>
+          <button id="refresh">⟳ Odśwież</button>
+          <button id="download">⬇ Pobierz</button>
+          <button id="downdiff">⬇ Pobierz diff</button>
+          <button id="archive" class="warn">🗄 Archiwizuj</button>
+        </span>
       </div>
-      <div class="tags" id="tags"></div>
-      <div id="off" class="off" style="display:none">
-        Tryb feedbacku jest wyłączony — włącz
-        <b>switch.dreame_zone_queue_feedback_log</b>, aby zbierać pełne stany.
-        Poniżej wpisy zebrane wcześniej.
+      <div id="vLogs">
+        <div class="tags" id="tags"></div>
+        <div id="off" class="off" style="display:none">
+          Tryb feedbacku jest wyłączony — włącz
+          <b>switch.dreame_zone_queue_feedback_log</b>, aby zbierać pełne stany.
+          Poniżej wpisy zebrane wcześniej.
+        </div>
+        <div class="meta" id="meta"></div>
+        <div id="log">Ładowanie…</div>
       </div>
-      <div class="meta" id="meta"></div>
-      <div id="log">Ładowanie…</div>`;
+      <div id="vCalib" style="display:none"></div>`;
     const r = this.shadowRoot;
+    r.getElementById("tabLogs").onclick = () => this._switch("logs");
+    r.getElementById("tabCalib").onclick = () => this._switch("calib");
     r.getElementById("refresh").onclick = () => this._load();
     r.getElementById("filter").oninput = () => this._renderLog();
     r.getElementById("tfrom").onchange = () => this._renderLog();
@@ -115,10 +151,181 @@ class DzqFeedbackPanel extends HTMLElement {
     this._load();
   }
 
+  _switch(view) {
+    this._view = view;
+    const r = this.shadowRoot;
+    r.getElementById("tabLogs").classList.toggle("on", view === "logs");
+    r.getElementById("tabCalib").classList.toggle("on", view === "calib");
+    r.getElementById("logCtl").style.display = view === "logs" ? "contents" : "none";
+    r.getElementById("vLogs").style.display = view === "logs" ? "" : "none";
+    r.getElementById("vCalib").style.display = view === "calib" ? "" : "none";
+    if (view === "calib") this._calibInit();
+  }
+
+  // ---------------------------------------------------------- kalibracja
+
+  async _calibInit() {
+    const box = this.shadowRoot.getElementById("vCalib");
+    box.innerHTML = "Ładowanie…";
+    let data;
+    try {
+      data = await this._hass.callApi("get", "dreame_zone_queue/map_calib");
+    } catch (e) {
+      box.textContent = "Błąd: " + e;
+      return;
+    }
+    this._mc = data;
+    const camEnt = "camera." + ((data.vacuum_entity || "").split(".")[1] || "") + "_map";
+    const cam = this._hass.states[camEnt];
+    const roomNames = Object.keys(data.room_zones || {}).sort();
+    if (!cam) {
+      box.innerHTML = `<div class="chint">Nie znalazłem kamery mapy
+        (<b>${camEnt}</b>) — kalibracja wymaga encji kamery z mapą robota.</div>`;
+      return;
+    }
+    if (!roomNames.length) {
+      box.innerHTML = `<div class="chint">Brak zdefiniowanych pokoi ze strefami —
+        kalibracja potrzebuje przynajmniej jednego znanego pokoju.</div>`;
+      return;
+    }
+    box.innerHTML = `
+      <div class="cbar">
+        <span id="cst"></span>
+        <span class="sp" style="flex:1"></span>
+        <select id="croom">${roomNames.map((r) =>
+          `<option>${this._escT(r)}</option>`).join("")}</select>
+        <button class="primary" id="cdraw">▭ Zaznacz ten pokój na mapie</button>
+        <button class="danger" id="cclear">Wyczyść kalibrację</button>
+      </div>
+      <div class="cwrap" id="cwrap">
+        <img id="cimg" src="${cam.attributes.entity_picture || ""}" draggable="false">
+        <div class="crect" id="crect"></div>
+        <div class="cbadge" id="cbadge"></div>
+      </div>
+      <div class="chint">Wybierz pokój, którego położenie znasz, kliknij
+        „Zaznacz ten pokój na mapie" i obrysuj go prostokątem. Przelicznik
+        px→mm zapisze się w integracji (wspólny dla wszystkich urządzeń).
+        <b>Weryfikacja:</b> po kalibracji najedź kursorem na znany narożnik
+        innego pokoju — dymek pokazuje współrzędne odkurzacza.</div>`;
+    const r = this.shadowRoot;
+    const img = r.getElementById("cimg");
+    const wrap = r.getElementById("cwrap");
+    const rect = r.getElementById("crect");
+    const badge = r.getElementById("cbadge");
+    let drawing = false;
+    let start = null;
+
+    const status = () => {
+      const el = r.getElementById("cst");
+      const c = this._mc.calib;
+      if (!c) {
+        el.textContent = "⚠ Brak kalibracji";
+        el.className = "cst-bad";
+      } else if (img.naturalWidth && Math.abs(c.iw - img.naturalWidth) > 1) {
+        el.textContent = "⚠ Mapa zmieniła rozmiar — skalibruj ponownie";
+        el.className = "cst-bad";
+      } else {
+        el.textContent = "Kalibracja aktywna ✓";
+        el.className = "cst-ok";
+      }
+    };
+    img.onload = status;
+    status();
+
+    r.getElementById("cdraw").onclick = () => {
+      drawing = true;
+      wrap.style.cursor = "crosshair";
+      this._toast("Obrysuj prostokątem: " + r.getElementById("croom").value);
+    };
+    r.getElementById("cclear").onclick = async () => {
+      await this._hass.callApi("post", "dreame_zone_queue/map_calib", { calib: null });
+      this._mc.calib = null;
+      status();
+      this._toast("Kalibracja wyczyszczona");
+    };
+
+    const pos = (e) => {
+      const b = wrap.getBoundingClientRect();
+      return [Math.max(0, Math.min(e.clientX - b.left, b.width)),
+              Math.max(0, Math.min(e.clientY - b.top, b.height))];
+    };
+    const toNat = (x, y) => {
+      const f = img.naturalWidth / img.clientWidth;
+      return [x * f, y * f];
+    };
+    wrap.addEventListener("pointerdown", (e) => {
+      if (!drawing) return;
+      e.preventDefault();
+      start = pos(e);
+      wrap.setPointerCapture(e.pointerId);
+    });
+    wrap.addEventListener("pointermove", (e) => {
+      const [x, y] = pos(e);
+      if (start) {
+        rect.style.left = Math.min(start[0], x) + "px";
+        rect.style.top = Math.min(start[1], y) + "px";
+        rect.style.width = Math.abs(x - start[0]) + "px";
+        rect.style.height = Math.abs(y - start[1]) + "px";
+        rect.style.display = "block";
+      }
+      // dymek weryfikacyjny ze wspolrzednymi odkurzacza
+      const c = this._mc.calib;
+      if (c && !drawing) {
+        const [nx, ny] = toNat(x, y);
+        badge.textContent = "X " + Math.round(c.ax * nx + c.bx) +
+          " · Y " + Math.round(c.ay * ny + c.by);
+        badge.style.left = x + "px";
+        badge.style.top = y + "px";
+        badge.style.display = "block";
+      } else {
+        badge.style.display = "none";
+      }
+    });
+    wrap.addEventListener("pointerleave", () => { badge.style.display = "none"; });
+    wrap.addEventListener("pointerup", async (e) => {
+      if (!start) return;
+      const [x, y] = pos(e);
+      const L = Math.min(start[0], x), T = Math.min(start[1], y);
+      const W = Math.abs(x - start[0]), H = Math.abs(y - start[1]);
+      start = null;
+      rect.style.display = "none";
+      if (W < 8 || H < 8) return;
+      const room = r.getElementById("croom").value;
+      const z = this._mc.room_zones[room];
+      if (!z) return;
+      const [nL, nT] = toNat(L, T);
+      const [nR, nB] = toNat(L + W, T + H);
+      const vxmin = Math.min(z[0], z[2]), vxmax = Math.max(z[0], z[2]);
+      const vymin = Math.min(z[1], z[3]), vymax = Math.max(z[1], z[3]);
+      // os Y odkurzacza rosnie do gory ekranu (Dreame) -> flip
+      const ax = (vxmax - vxmin) / (nR - nL);
+      const ay = (vymin - vymax) / (nB - nT);
+      const calib = {
+        ax, bx: vxmin - ax * nL,
+        ay, by: vymax - ay * nT,
+        iw: img.naturalWidth, ih: img.naturalHeight,
+      };
+      try {
+        await this._hass.callApi("post", "dreame_zone_queue/map_calib", { calib });
+        this._mc.calib = calib;
+        drawing = false;
+        wrap.style.cursor = "";
+        status();
+        this._toast("✓ Kalibracja zapisana — zweryfikuj kursorem na innym pokoju");
+      } catch (err) {
+        this._toast("Błąd zapisu: " + err);
+      }
+    });
+  }
+
+  _escT(s) {
+    return String(s).replace(/&/g, "&amp;").replace(/</g, "&lt;");
+  }
+
   // ------------------------------------------------------------- dane
 
   async _load() {
-    if (!this._hass) return;
+    if (!this._hass || this._view !== "logs") return;
     try {
       const data = await this._hass.callApi("get", "dreame_zone_queue/feedback_log");
       this._raw = data.log || "";

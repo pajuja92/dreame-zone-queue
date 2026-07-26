@@ -158,6 +158,49 @@ def _history_view_cls():
     return _View
 
 
+def _map_calib_view_cls():
+    """GET/POST /api/dreame_zone_queue/map_calib — kalibracja mapy px->mm
+    (panel Zone Queue: zakladka Kalibracja mapy)."""
+    from homeassistant.components.http import HomeAssistantView
+
+    class _View(HomeAssistantView):
+        url = "/api/dreame_zone_queue/map_calib"
+        name = "api:dreame_zone_queue:map_calib"
+        requires_auth = True
+
+        async def get(self, request):
+            hass = request.app["hass"]
+            manager = _get_manager(hass)
+            if manager is None:
+                return self.json({"error": "integration not loaded"},
+                                 status_code=404)
+            return self.json({
+                "calib": manager.map_calib,
+                "room_zones": {n: list(r["zone"])
+                               for n, r in manager.rooms.items()
+                               if r.get("zone")},
+                "vacuum_entity": manager.vacuum_entity,
+            })
+
+        async def post(self, request):
+            hass = request.app["hass"]
+            user = request.get("hass_user")
+            if user is not None and not user.is_admin:
+                return self.json({"error": "admin only"}, status_code=403)
+            manager = _get_manager(hass)
+            if manager is None:
+                return self.json({"error": "integration not loaded"},
+                                 status_code=404)
+            body = await request.json()
+            try:
+                await manager.async_set_map_calib(body.get("calib"))
+            except ValueError as err:
+                return self.json({"error": str(err)}, status_code=400)
+            return self.json({"ok": True})
+
+    return _View
+
+
 async def _register_feedback_panel(hass: HomeAssistant) -> None:
     """Osobna pozycja w menu bocznym z podgladem dziennika feedbacku."""
     if hass.data[DOMAIN].get("_panel_registered"):
@@ -165,13 +208,14 @@ async def _register_feedback_panel(hass: HomeAssistant) -> None:
     hass.http.register_view(_feedback_view_cls()())
     hass.http.register_view(_archive_view_cls()())
     hass.http.register_view(_history_view_cls()())
+    hass.http.register_view(_map_calib_view_cls()())
     try:
         from homeassistant.components import frontend
 
         frontend.async_register_built_in_panel(
             hass,
             component_name="custom",
-            sidebar_title="Zone Queue Logi",
+            sidebar_title="Zone Queue",
             sidebar_icon="mdi:script-text-outline",
             frontend_url_path="dzq-feedback",
             config={"_panel_custom": {

@@ -67,6 +67,8 @@ class QueueManager:
         self.stats: dict[str, dict] = {}
         # historia przebiegów per pokoj (karta statystyk)
         self.history: dict[str, list] = {}
+        # kalibracja mapy px->mm (panel Zone Queue), wspolna dla instancji
+        self.map_calib: dict | None = None
         self._unsub_state: Callable | None = None
         self._unsub_timer: Callable | None = None
         self._unsub_task_sensor: Callable | None = None
@@ -145,6 +147,7 @@ class QueueManager:
         self.presets = data.get("presets", {})
         self.stats = data.get("stats", {})
         self.history = data.get("history", {})
+        self.map_calib = data.get("map_calib")
         self.feedback = bool(data.get("feedback", False))
         if self.feedback:
             # RotatingFileHandler otwiera plik przy tworzeniu — poza petla
@@ -204,6 +207,7 @@ class QueueManager:
                 "presets": self.presets,
                 "stats": self.stats,
                 "history": self.history,
+                "map_calib": self.map_calib,
                 "feedback": self.feedback,
             }
         )
@@ -247,6 +251,19 @@ class QueueManager:
         """Feedback entry: dedicated file + HA log (own logger name)."""
         if self.feedback:
             self._fb_logger.warning(msg)
+
+    async def async_set_map_calib(self, calib: dict | None) -> None:
+        """Kalibracja mapy px->mm z panelu Zone Queue (None = wyczysc)."""
+        if calib is not None:
+            try:
+                calib = {k: float(calib[k])
+                         for k in ("ax", "bx", "ay", "by", "iw", "ih")}
+            except (KeyError, TypeError, ValueError) as err:
+                raise ValueError(f"invalid calibration: {err}") from err
+        self.map_calib = calib
+        _LOGGER.warning("DZQ_ACTION | MAP_CALIB | %s",
+                        "saved" if calib else "cleared")
+        self._notify()
 
     async def async_archive_feedback(self) -> str:
         """Przenies biezacy dziennik (+ pliki rotacji) do *_archived_<data>*
@@ -1762,6 +1779,7 @@ class QueueManager:
             # strefy pokojow — kalibracja mapy w oknie "Wlasna strefa"
             "room_zones": {n: list(r["zone"]) for n, r in self.rooms.items()
                            if r.get("zone")},
+            "map_calib": self.map_calib,
             "count_pending": sum(1 for i in self.queue if i["status"] == STATUS_PENDING),
             "vacuum_entity": self.vacuum_entity,
             "feedback": self.feedback,

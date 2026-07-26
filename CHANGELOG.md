@@ -4,6 +4,36 @@ Wszystkie istotne zmiany w projekcie. Format oparty o
 [Keep a Changelog](https://keepachangelog.com/pl/1.1.0/),
 wersjonowanie zgodne z [SemVer](https://semver.org/lang/pl/).
 
+## [2.0.0-beta.16] - 2026-07-26
+
+Rozdzielenie funkcji z beta.15 zgodnie z feedbackiem: rysowanie strefy
+i kalibracja mapy to teraz osobne miejsca.
+
+### Zmienione
+- **Modal „▭ Własna strefa" służy już tylko do rysowania** jednorazowej
+  powierzchni — cała kalibracja zniknęła z tego okna. Gdy kalibracji
+  brak, modal odsyła do panelu Zone Queue.
+- **Kalibracja mapy przeniesiona do panelu integracji**: panel boczny
+  „Zone Queue" (dawniej „Zone Queue Logi") ma zakładki **Logi** oraz
+  **🎯 Kalibracja mapy** — wybór znanego pokoju, obrysowanie go na
+  mapie z kamery, weryfikacja kursorem (dymek ze współrzędnymi
+  odkurzacza), czyszczenie kalibracji. Przelicznik zapisuje się
+  **po stronie integracji** (Store, przeżywa restarty, wspólny dla
+  wszystkich przeglądarek i urządzeń) — nie w localStorage.
+  Endpoint: `GET/POST /api/dreame_zone_queue/map_calib` (POST tylko
+  admin), sensor wystawia `map_calib`.
+
+### Dodane
+- **Rysowanie strefy wielokątem** (min. 3 punkty): tryb „△ Wielokąt"
+  obok prostokąta — klikanie narożników, zakończenie dwuklikiem lub
+  przyciskiem „✓ Zakończ kształt"; robot dostaje prostokąt obejmujący
+  (jedyny kształt, jaki przyjmuje `vacuum_clean_zone`), co modal
+  wyraźnie zaznacza. Przycisk „Wyczyść" kasuje szkic.
+
+### Testy
+- Scenariusz kalibracji mapy: zapis, persystencja przez restart,
+  czyszczenie, walidacja (40 łącznie).
+
 ## [2.0.0-beta.15] - 2026-07-26
 
 ### Dodane — własne strefy rysowane na mapie
