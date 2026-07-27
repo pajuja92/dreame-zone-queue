@@ -772,6 +772,45 @@ async def test_history_records_side_events_with_duration():
     assert 115 <= ev[0]["dur"] <= 125
 
 
+async def test_session_report_lifecycle():
+    """Kolejka start->koniec = jedna sesja z przebiegami i strefami."""
+    hass, m = mk()
+    await m.async_setup()
+    await m.async_add("Salon")
+    await m.async_add("Kuchnia")
+    hass.states[VAC] = st("docked", **TASK_DONE)
+    await m.async_start()
+    assert len(m.sessions) == 1 and m.sessions[0]["ended"] is None
+    send(m, st("cleaning", **CLEANING),
+         st("returning", cleaned_area=3, **TASK_DONE))
+    await drain()
+    await fire_timers(hass)  # dispatch Kuchnia
+    send(m, st("cleaning", **CLEANING),
+         st("returning", cleaned_area=3, **TASK_DONE))
+    await drain()
+    await fire_timers(hass)  # brak pending -> koniec kolejki
+    s = m.sessions[0]
+    assert s["ended"] is not None
+    assert [r["room"] for r in s["runs"]] == ["Salon", "Kuchnia"]
+    assert all(r["outcome"] == "done" and r["zone"] for r in s["runs"])
+    # nowy start = NOWA sesja
+    await m.async_add("Salon")
+    await m.async_start()
+    assert len(m.sessions) == 2 and m.sessions[1]["ended"] is None
+
+
+async def test_session_closed_on_stop_includes_skipped():
+    hass, m = mk()
+    await m.async_setup()
+    await m.async_add("Salon")
+    hass.states[VAC] = st("docked", **TASK_DONE)
+    await m.async_start()
+    await m.async_stop()
+    s = m.sessions[0]
+    assert s["ended"] is not None
+    assert s["runs"][-1]["outcome"] == "skipped"  # przerwany pokoj w raporcie
+
+
 async def test_map_calib_persisted():
     hass, m = mk()
     await m.async_setup()

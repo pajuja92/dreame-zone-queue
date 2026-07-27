@@ -1,11 +1,12 @@
 """Constants for Dreame Zone Queue."""
 
 DOMAIN = "dreame_zone_queue"
-VERSION = "2.0.0-beta.17"
+VERSION = "2.0.0-beta.19"
 
 URL_BASE = "/dreame_zone_queue_files"
 CARD_FILENAME = "vacuum-queue-card.js"
 STATS_CARD_FILENAME = "vacuum-stats-card.js"
+SESSION_CARD_FILENAME = "vacuum-session-card.js"
 
 # --- config / options keys ---
 CONF_VACUUM_ENTITY = "vacuum_entity"

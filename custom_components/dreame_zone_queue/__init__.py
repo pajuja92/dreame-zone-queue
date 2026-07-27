@@ -23,6 +23,7 @@ from .const import (
     ATTR_WATER,
     CARD_FILENAME,
     STATS_CARD_FILENAME,
+    SESSION_CARD_FILENAME,
     DOMAIN,
     FEEDBACK_LOG,
     SERVICE_ADD,
@@ -153,6 +154,8 @@ def _history_view_cls():
                 # trwajacy przebieg (outcome='active') — widoki historii
                 # pokazuja go od razu jako "w trakcie"
                 "current": manager.current_run(),
+                # sesje kolejki (raporty start->koniec) dla vacuum-session-card
+                "sessions": manager.sessions,
             })
 
     return _View
@@ -261,7 +264,8 @@ async def _register_frontend(hass: HomeAssistant) -> None:
             raise RuntimeError("lovelace resources unavailable")
         if not resources.loaded:
             await resources.async_load()
-        for filename in (CARD_FILENAME, STATS_CARD_FILENAME):
+        for filename in (CARD_FILENAME, STATS_CARD_FILENAME,
+                         SESSION_CARD_FILENAME):
             url = f"{URL_BASE}/{filename}?v={VERSION}"
             found = False
             for item in resources.async_items():

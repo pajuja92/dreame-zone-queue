@@ -69,6 +69,8 @@ class QueueManager:
         self.history: dict[str, list] = {}
         # kalibracja mapy px->mm (panel Zone Queue), wspolna dla instancji
         self.map_calib: dict | None = None
+        # sesje kolejki: kazdy start->koniec/clear/stop jako jeden raport
+        self.sessions: list[dict] = []
         self._unsub_state: Callable | None = None
         self._unsub_timer: Callable | None = None
         self._unsub_task_sensor: Callable | None = None
@@ -148,6 +150,7 @@ class QueueManager:
         self.stats = data.get("stats", {})
         self.history = data.get("history", {})
         self.map_calib = data.get("map_calib")
+        self.sessions = data.get("sessions", [])
         self.feedback = bool(data.get("feedback", False))
         if self.feedback:
             # RotatingFileHandler otwiera plik przy tworzeniu — poza petla
@@ -208,6 +211,7 @@ class QueueManager:
                 "stats": self.stats,
                 "history": self.history,
                 "map_calib": self.map_calib,
+                "sessions": self.sessions,
                 "feedback": self.feedback,
             }
         )
@@ -609,6 +613,7 @@ class QueueManager:
         if active is not None:
             self._record_run(active, "skipped")
             active["status"] = STATUS_SKIPPED
+        self._session_close()
         self._notify()
         try:
             await self.hass.services.async_call(
@@ -722,6 +727,7 @@ class QueueManager:
         # go zatrzymac i odeslac, nie tylko przy running=True
         had_active = self._active() is not None
         was_running = self.running
+        self._session_close()
         self.running = False
         self.paused_reason = None
         self._wait_wash = None
@@ -931,6 +937,7 @@ class QueueManager:
             self.running = False
             self.paused_reason = None
             self._notify()
+            self._session_close()
             _LOGGER.info("Queue finished — sending the robot back to the dock")
             try:
                 await self.hass.services.async_call(
@@ -957,6 +964,7 @@ class QueueManager:
             )
             return
 
+        self._session_open()
         nxt["status"] = STATUS_ACTIVE
         nxt["started_at"] = time.time()
         # reset per-run flags from any previous attempt
@@ -1231,6 +1239,30 @@ class QueueManager:
                 out.append({"reason": reason, "dur": dur})
         return out
 
+    def _session(self) -> dict | None:
+        """Otwarta sesja kolejki (ended=None) albo None."""
+        if self.sessions and self.sessions[-1].get("ended") is None:
+            return self.sessions[-1]
+        return None
+
+    def _session_open(self) -> dict:
+        s = self._session()
+        if s is None:
+            s = {"id": self._next_id, "started": round(time.time()),
+                 "ended": None, "runs": []}
+            self._next_id += 1
+            self.sessions.append(s)
+            del self.sessions[:-50]
+            _LOGGER.warning("DZQ_DECISION | SESSION_OPEN | id=%s", s["id"])
+        return s
+
+    def _session_close(self) -> None:
+        s = self._session()
+        if s is not None:
+            s["ended"] = round(time.time())
+            _LOGGER.warning("DZQ_DECISION | SESSION_CLOSE | id=%s runs=%s",
+                            s["id"], len(s["runs"]))
+
     def _record_run(self, item: dict, outcome: str) -> None:
         """Wpis do historii pokoju (karta statystyk). Zapis na dysk robi
         _notify() wolane przez kazda sciezke konczaca przebieg."""
@@ -1250,7 +1282,7 @@ class QueueManager:
         suction_off = item.get("suction") == "off"
         water_off = item.get("water") == "off"
         runs = self.history.setdefault(item["room"], [])
-        runs.append({
+        entry = {
             "ts": round(started),
             "dur": round(time.time() - started),
             "pct": pct,
@@ -1263,8 +1295,16 @@ class QueueManager:
             "outcome": outcome,
             "returns": item.get("dock_returns", 0),
             "events": self._events_summary(item),
-        })
+        }
+        runs.append(entry)
         del runs[:-HISTORY_MAX_RUNS]
+        # kopia do raportu biezacej sesji kolejki (z pokojem i strefa
+        # — mapka w widgecie historii kolejek)
+        sess = self._session()
+        if sess is not None:
+            sess["runs"].append(
+                {"room": item["room"], "zone": list(item["zone"]), **entry})
+            del sess["runs"][:-200]
 
     def _area_ratio(self, item: dict) -> float | None:
         """Sprzatnieta czesc strefy (0..1); None gdy brak danych lub strefa

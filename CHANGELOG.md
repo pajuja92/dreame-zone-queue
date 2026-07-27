@@ -4,6 +4,40 @@ Wszystkie istotne zmiany w projekcie. Format oparty o
 [Keep a Changelog](https://keepachangelog.com/pl/1.1.0/),
 wersjonowanie zgodne z [SemVer](https://semver.org/lang/pl/).
 
+## [2.0.0-beta.19] - 2026-07-27
+
+### Dodane — statystyki globalne w karcie historii kolejek
+- **Pasek podsumowania wszystkich zadań** (ze wszystkich kolejek) nad
+  raportem: liczba kolejek i zadań, liczniki wyników (✓/✗/⏭/⚠),
+  % sukcesu, łączny czas sprzątania.
+- **Baner „▶ Kolejka w trakcie"** (od której godziny + co robot właśnie
+  sprząta) — widoczny także podczas przeglądania starszych kolejek,
+  z linkiem „pokaż" przeskakującym do trwającej sesji.
+
+## [2.0.0-beta.18] - 2026-07-27
+
+### Dodane — historia całych kolejek: `custom:vacuum-session-card`
+- **Raport per kolejka**: każdy przebieg kolejki (start → koniec / Stop /
+  Wyczyść; pauzy i restarty HA nie przerywają sesji) zapisuje się jako
+  jedna sesja z listą pokoi i wynikami. Do 50 ostatnich kolejek w Store.
+- **Nowy osobny widget**: lista pokoi sesji (nr, wynik kolorem, % strefy,
+  czas, godzina, powroty) obok **mapy z zaznaczonymi strefami** —
+  numerowane prostokąty w kolorze wyniku (zielony = posprzątany,
+  czerwony = anulowany, szary = pominięty, pomarańczowy = błąd,
+  niebieski = w trakcie). Mapa używa kalibracji z panelu Zone Queue.
+- **Przełączanie między kolejkami**: strzałki ‹ › + lista rozwijana
+  (data, liczba pokoi, „w trakcie" dla otwartej). Otwarta sesja
+  pokazuje aktualnie sprzątany pokój na żywo.
+- Podsumowanie sesji: „X/Y pokoi posprzątanych · łącznie N min".
+- Endpoint `/history` zwraca `sessions`; karta rejestruje się
+  automatycznie jako zasób Lovelace. Konfiguracja:
+  `type: custom:vacuum-session-card` (+ opcjonalnie `title`,
+  `map_camera`).
+
+### Testy
+- 2 scenariusze sesji: pełny cykl (2 pokoje → zamknięcie → nowa sesja),
+  Stop z pominiętym pokojem w raporcie (42 łącznie).
+
 ## [2.0.0-beta.17] - 2026-07-26
 
 ### Zmienione — rysowanie wygodne na telefonie, oba tryby wszędzie
