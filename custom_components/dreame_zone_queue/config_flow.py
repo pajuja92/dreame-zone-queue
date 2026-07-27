@@ -137,7 +137,36 @@ class DreameZoneQueueOptionsFlow(config_entries.OptionsFlow):
     async def async_step_init(self, user_input=None):
         return self.async_show_menu(
             step_id="init",
-            menu_options=["add_room", "edit_room", "remove_room", "import_dreame", "bulk_edit", "settings"],
+            menu_options=["add_room", "edit_room", "remove_room", "import_dreame", "bulk_edit", "settings", "map_calib"],
+        )
+
+    def _manager(self):
+        from .manager import QueueManager
+        for v in self.hass.data.get(DOMAIN, {}).values():
+            if isinstance(v, QueueManager):
+                return v
+        return None
+
+    async def async_step_map_calib(self, user_input=None):
+        """Status kalibracji mapy + reset. Sama kalibracja (obrysowanie
+        pokoju) odbywa sie w karcie: przycisk "Wlasna strefa" poprosi o nia
+        przy nastepnym uzyciu po wyczyszczeniu."""
+        manager = self._manager()
+        if user_input is not None:
+            if user_input.get("clear_calib") and manager is not None:
+                await manager.async_set_map_calib(None)
+                return self.async_abort(reason="calib_cleared")
+            return self.async_abort(reason="calib_unchanged")
+        has = bool(manager and manager.map_calib)
+        schema = vol.Schema(
+            {vol.Required("clear_calib", default=False): BooleanSelector()}
+        )
+        return self.async_show_form(
+            step_id="map_calib",
+            data_schema=schema,
+            description_placeholders={
+                "status": "aktywna ✓" if has else "brak (karta poprosi przy pierwszym użyciu)",
+            },
         )
 
     # ---------------- rooms ----------------

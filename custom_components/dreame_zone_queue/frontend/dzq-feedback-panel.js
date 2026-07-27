@@ -1,10 +1,8 @@
-import { attachDraw, defaultMode } from "./dzq-draw.js";
-
-/* Panel boczny "Zone Queue" — dwie zakładki:
- *  · Logi — dziennik feedbacku (/config/dreame_zone_queue_feedback.log);
- *    plik na dysku ZAWSZE pełny, widok/pobranie "diff" liczy różnice w locie.
- *  · Kalibracja mapy — przelicznik px→mm dla rysowania własnych stref
- *    (zapis po stronie integracji: POST /api/dreame_zone_queue/map_calib). */
+/* Panel boczny "Zone Queue" — dziennik feedbacku
+ * (/config/dreame_zone_queue_feedback.log). Plik na dysku ZAWSZE pełny,
+ * widok/pobranie "diff" liczy różnice w locie. Kalibracja mapy odbywa się
+ * w karcie ("Własna strefa" przy pierwszym użyciu), reset w opcjach
+ * integracji. */
 
 class DzqFeedbackPanel extends HTMLElement {
   set hass(hass) {
@@ -22,7 +20,6 @@ class DzqFeedbackPanel extends HTMLElement {
   _build() {
     this._built = true;
     this._tagSel = {}; // tag -> bool (nowe tagi domyślnie włączone)
-    this._view = "logs";
     this.attachShadow({ mode: "open" });
     this.shadowRoot.innerHTML = `
       <style>
@@ -40,9 +37,6 @@ class DzqFeedbackPanel extends HTMLElement {
                font: inherit; display: inline-flex; align-items: center; gap: 6px; }
         .top button:hover { background: rgba(255,255,255,.25); }
         .top button.warn { background: rgba(255,120,0,.55); }
-        .top button.tab { border: 1px solid rgba(255,255,255,.4); }
-        .top button.tab.on { background: rgba(255,255,255,.9);
-               color: var(--app-header-background-color, var(--primary-color)); font-weight: 600; }
         .tags { display: flex; gap: 6px; padding: 8px 16px 0; flex-wrap: wrap; }
         .tags label { display: inline-flex; align-items: center; gap: 4px;
                background: var(--card-background-color); color: var(--primary-text-color);
@@ -73,32 +67,9 @@ class DzqFeedbackPanel extends HTMLElement {
         .toast { position: fixed; bottom: 24px; left: 50%; transform: translateX(-50%);
               background: var(--primary-color); color: #fff; padding: 10px 18px;
               border-radius: 10px; z-index: 9; box-shadow: 0 4px 16px rgba(0,0,0,.3); }
-        /* — kalibracja — */
-        #vCalib { padding: 14px 16px; max-width: 980px; }
-        .cbar { display: flex; gap: 8px; align-items: center; flex-wrap: wrap;
-              margin-bottom: 10px; color: var(--primary-text-color); }
-        .cbar select, .cbar button { font: inherit; padding: 7px 12px; border-radius: 8px;
-              border: 1px solid var(--divider-color); cursor: pointer;
-              background: var(--card-background-color); color: var(--primary-text-color); }
-        .cbar button.primary { background: var(--primary-color); color: #fff; border: none; }
-        .cbar button.danger { color: var(--error-color, #d33); }
-        .cst-ok { color: var(--success-color, #0a2); font-weight: 600; }
-        .cst-bad { color: var(--warning-color, #ff9800); font-weight: 600; }
-        .cwrap { position: relative; user-select: none; touch-action: none; line-height: 0; }
-        .cwrap img { width: 100%; border-radius: 10px; display: block; }
-        .crect { position: absolute; display: none; border: 2px solid #ffb84d;
-              background: rgba(255,184,77,.18); border-radius: 3px; pointer-events: none; }
-        .cbadge { position: absolute; display: none; transform: translate(12px, 12px);
-              background: rgba(13,16,21,.92); border: 1px solid #ffb84d; color: #ffb84d;
-              font: 12px ui-monospace, Menlo, monospace; padding: 3px 8px;
-              border-radius: 6px; pointer-events: none; white-space: nowrap; z-index: 3; }
-        .chint { margin-top: 10px; font-size: .85em; color: var(--secondary-text-color);
-              line-height: 1.5; }
       </style>
       <div class="top">
-        <h1>🧹 Zone Queue</h1>
-        <button class="tab on" id="tabLogs">Logi</button>
-        <button class="tab" id="tabCalib">🎯 Kalibracja mapy</button>
+        <h1>🧹 Zone Queue — dziennik feedbacku</h1>
         <span class="sp"></span>
         <span id="logCtl" style="display:contents">
           <input id="filter" placeholder="filtr tekstu">
@@ -127,10 +98,8 @@ class DzqFeedbackPanel extends HTMLElement {
         <div class="meta" id="meta"></div>
         <div id="log">Ładowanie…</div>
       </div>
-      <div id="vCalib" style="display:none"></div>`;
+      `;
     const r = this.shadowRoot;
-    r.getElementById("tabLogs").onclick = () => this._switch("logs");
-    r.getElementById("tabCalib").onclick = () => this._switch("calib");
     r.getElementById("refresh").onclick = () => this._load();
     r.getElementById("filter").oninput = () => this._renderLog();
     r.getElementById("tfrom").onchange = () => this._renderLog();
@@ -153,196 +122,10 @@ class DzqFeedbackPanel extends HTMLElement {
     this._load();
   }
 
-  _switch(view) {
-    this._view = view;
-    const r = this.shadowRoot;
-    r.getElementById("tabLogs").classList.toggle("on", view === "logs");
-    r.getElementById("tabCalib").classList.toggle("on", view === "calib");
-    r.getElementById("logCtl").style.display = view === "logs" ? "contents" : "none";
-    r.getElementById("vLogs").style.display = view === "logs" ? "" : "none";
-    r.getElementById("vCalib").style.display = view === "calib" ? "" : "none";
-    if (view === "calib") this._calibInit();
-  }
-
-  // ---------------------------------------------------------- kalibracja
-
-  async _calibInit() {
-    const box = this.shadowRoot.getElementById("vCalib");
-    box.innerHTML = "Ładowanie…";
-    let data;
-    try {
-      data = await this._hass.callApi("get", "dreame_zone_queue/map_calib");
-    } catch (e) {
-      box.textContent = "Błąd: " + e;
-      return;
-    }
-    this._mc = data;
-    const camEnt = "camera." + ((data.vacuum_entity || "").split(".")[1] || "") + "_map";
-    const cam = this._hass.states[camEnt];
-    const roomNames = Object.keys(data.room_zones || {}).sort();
-    if (!cam) {
-      box.innerHTML = `<div class="chint">Nie znalazłem kamery mapy
-        (<b>${camEnt}</b>) — kalibracja wymaga encji kamery z mapą robota.</div>`;
-      return;
-    }
-    if (!roomNames.length) {
-      box.innerHTML = `<div class="chint">Brak zdefiniowanych pokoi ze strefami —
-        kalibracja potrzebuje przynajmniej jednego znanego pokoju.</div>`;
-      return;
-    }
-    box.innerHTML = `
-      <div class="cbar">
-        <span id="cst"></span>
-        <span class="sp" style="flex:1"></span>
-        <select id="croom">${roomNames.map((r) =>
-          `<option>${this._escT(r)}</option>`).join("")}</select>
-        <button class="primary" id="cdraw">Zaznacz ten pokój na mapie</button>
-        <button class="danger" id="cclear">Wyczyść kalibrację</button>
-      </div>
-      <div class="cbar" id="cmodes" style="display:none">
-        <button id="cmrect">▭ Prostokąt</button>
-        <button id="cmpoly">△ Punkty</button>
-        <button id="cmundo">↩ Cofnij punkt</button>
-        <button id="cmdone" class="primary">✓ Zakończ kształt</button>
-        <span id="cprog" style="color:var(--secondary-text-color)"></span>
-      </div>
-      <div class="cwrap" id="cwrap">
-        <img id="cimg" src="${cam.attributes.entity_picture || ""}" draggable="false">
-        <svg id="csvg" style="position:absolute;inset:0;width:100%;height:100%;pointer-events:none"></svg>
-        <div class="cbadge" id="cbadge"></div>
-      </div>
-      <div class="chint">Wybierz pokój, którego położenie znasz, kliknij
-        „Zaznacz ten pokój na mapie" i obrysuj go prostokątem. Przelicznik
-        px→mm zapisze się w integracji (wspólny dla wszystkich urządzeń).
-        <b>Weryfikacja:</b> po kalibracji najedź kursorem na znany narożnik
-        innego pokoju — dymek pokazuje współrzędne odkurzacza.</div>`;
-    const r = this.shadowRoot;
-    const img = r.getElementById("cimg");
-    const wrap = r.getElementById("cwrap");
-    const badge = r.getElementById("cbadge");
-    let armed = false; // czy trwa zaznaczanie pokoju
-
-    const status = () => {
-      const el = r.getElementById("cst");
-      const c = this._mc.calib;
-      if (!c) {
-        el.textContent = "⚠ Brak kalibracji";
-        el.className = "cst-bad";
-      } else if (img.naturalWidth && Math.abs(c.iw - img.naturalWidth) > 1) {
-        el.textContent = "⚠ Mapa zmieniła rozmiar — skalibruj ponownie";
-        el.className = "cst-bad";
-      } else {
-        el.textContent = "Kalibracja aktywna ✓";
-        el.className = "cst-ok";
-      }
-    };
-    img.onload = status;
-    status();
-
-    wrap.style.overflow = "hidden";
-    const toNat = (x, y) => {
-      const f = img.naturalWidth / img.clientWidth;
-      return [x * f, y * f];
-    };
-    const saveCalib = async (dispPts) => {
-      const room = r.getElementById("croom").value;
-      const z = this._mc.room_zones[room];
-      if (!z) return;
-      const nat = dispPts.map((p) => toNat(p[0], p[1]));
-      const nL = Math.min(...nat.map((p) => p[0]));
-      const nR = Math.max(...nat.map((p) => p[0]));
-      const nT = Math.min(...nat.map((p) => p[1]));
-      const nB = Math.max(...nat.map((p) => p[1]));
-      if (nR - nL < 8 || nB - nT < 8) return;
-      const vxmin = Math.min(z[0], z[2]), vxmax = Math.max(z[0], z[2]);
-      const vymin = Math.min(z[1], z[3]), vymax = Math.max(z[1], z[3]);
-      // os Y odkurzacza rosnie do gory ekranu (Dreame) -> flip
-      const ax = (vxmax - vxmin) / (nR - nL);
-      const ay = (vymin - vymax) / (nB - nT);
-      const calib = {
-        ax, bx: vxmin - ax * nL,
-        ay, by: vymax - ay * nT,
-        iw: img.naturalWidth, ih: img.naturalHeight,
-      };
-      try {
-        await this._hass.callApi("post", "dreame_zone_queue/map_calib", { calib });
-        this._mc.calib = calib;
-        armed = false;
-        draw.clear();
-        r.getElementById("cmodes").style.display = "none";
-        wrap.style.cursor = "";
-        status();
-        this._toast("✓ Kalibracja zapisana — zweryfikuj kursorem na innym pokoju");
-      } catch (err) {
-        this._toast("Błąd zapisu: " + err);
-      }
-    };
-
-    const draw = attachDraw(wrap, img, r.getElementById("csvg"), {
-      shape: (sh) => { if (armed) saveCalib(sh.pts); },
-      progress: (n) => {
-        r.getElementById("cprog").textContent =
-          draw && draw.getMode() === "poly" && n ? `punkty: ${n}` : "";
-      },
-      hover: (pt) => {
-        const c = this._mc.calib;
-        if (!c || armed || !pt) { badge.style.display = "none"; return; }
-        const [nx, ny] = toNat(pt[0], pt[1]);
-        badge.textContent = "X " + Math.round(c.ax * nx + c.bx) +
-          " · Y " + Math.round(c.ay * ny + c.by);
-        badge.style.left = pt[0] + "px";
-        badge.style.top = pt[1] + "px";
-        badge.style.display = "block";
-      },
-    });
-
-    const setMode = (m) => {
-      draw.setMode(m);
-      const on = "var(--primary-color)";
-      const off = "var(--card-background-color)";
-      const mr = r.getElementById("cmrect"), mp = r.getElementById("cmpoly");
-      mr.style.background = m === "rect" ? on : off;
-      mr.style.color = m === "rect" ? "#fff" : "";
-      mp.style.background = m === "poly" ? on : off;
-      mp.style.color = m === "poly" ? "#fff" : "";
-      r.getElementById("cmundo").style.display = m === "poly" ? "" : "none";
-      r.getElementById("cmdone").style.display = m === "poly" ? "" : "none";
-    };
-    r.getElementById("cmrect").onclick = () => setMode("rect");
-    r.getElementById("cmpoly").onclick = () => setMode("poly");
-    r.getElementById("cmundo").onclick = () => draw.undo();
-    r.getElementById("cmdone").onclick = () => {
-      if (!draw.finish()) this._toast("Wielokąt wymaga min. 3 punktów");
-    };
-    wrap.addEventListener("dblclick", () => {
-      if (armed && draw.getMode() === "poly") r.getElementById("cmdone").onclick();
-    });
-
-    r.getElementById("cdraw").onclick = () => {
-      armed = true;
-      draw.clear();
-      r.getElementById("cmodes").style.display = "";
-      setMode(defaultMode());
-      wrap.style.cursor = "crosshair";
-      this._toast("Zaznacz na mapie: " + r.getElementById("croom").value +
-        " (prostokątem lub punktami; dwa palce = zoom)");
-    };
-    r.getElementById("cclear").onclick = async () => {
-      await this._hass.callApi("post", "dreame_zone_queue/map_calib", { calib: null });
-      this._mc.calib = null;
-      status();
-      this._toast("Kalibracja wyczyszczona");
-    };
-  }
-
-  _escT(s) {
-    return String(s).replace(/&/g, "&amp;").replace(/</g, "&lt;");
-  }
-
   // ------------------------------------------------------------- dane
 
   async _load() {
-    if (!this._hass || this._view !== "logs") return;
+    if (!this._hass) return;
     try {
       const data = await this._hass.callApi("get", "dreame_zone_queue/feedback_log");
       this._raw = data.log || "";

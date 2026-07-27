@@ -103,6 +103,13 @@
           "camera_entity": "Encja kamery mapy (opcjonalna)",
           "mode": "Tryb (merge = dopisz / replace = zastąp)"
         }
+      },
+      "map_calib": {
+        "title": "Kalibracja mapy",
+        "description": "Stan kalibracji: {status}\n\nKalibrację wykonuje się w karcie kolejki — przycisk „▭ Własna strefa\" prosi o obrysowanie znanego pokoju przy pierwszym użyciu. Jeżeli mapa się rozkalibrowała (strefy trafiają obok), zaznacz poniżej wyczyszczenie — karta poprosi o nową kalibrację przy następnym otwarciu.",
+        "data": {
+          "clear_calib": "Wyczyść kalibrację mapy"
+        }
       }
     },
     "error": {
@@ -114,7 +121,9 @@
       "zone_too_small": "Strefa jest mniejsza niż 120 mm na jednym z boków — robot odrzuca takie strefy."
     },
     "abort": {
-      "no_rooms": "Nie zdefiniowano jeszcze żadnych pokoi."
+      "no_rooms": "Nie zdefiniowano jeszcze żadnych pokoi.",
+      "calib_cleared": "Kalibracja wyczyszczona — karta poprosi o nową przy następnym użyciu „Własnej strefy\".",
+      "calib_unchanged": "Kalibracja bez zmian."
     }
   }
 }

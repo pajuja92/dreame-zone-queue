@@ -103,6 +103,13 @@
           "camera_entity": "Map camera entity (optional)",
           "mode": "Mode (merge / replace)"
         }
+      },
+      "map_calib": {
+        "title": "Map calibration",
+        "description": "Calibration status: {status}\n\nCalibration happens in the queue card — the \"▭ Custom zone\" button asks you to outline a known room on first use. If the map got out of sync (zones land off-target), tick the box below — the card will ask for a fresh calibration next time.",
+        "data": {
+          "clear_calib": "Clear map calibration"
+        }
       }
     },
     "error": {
@@ -114,7 +121,9 @@
       "zone_too_small": "The zone is smaller than 120 mm on one side — the robot rejects such zones."
     },
     "abort": {
-      "no_rooms": "No rooms defined yet."
+      "no_rooms": "No rooms defined yet.",
+      "calib_cleared": "Calibration cleared — the card will ask for a new one next time you use \"Custom zone\".",
+      "calib_unchanged": "Calibration unchanged."
     }
   }
 }

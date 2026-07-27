@@ -316,10 +316,11 @@ class VacuumQueueCard extends HTMLElement {
   /* Modal "Wlasna strefa": mapa z kamery robota + kalibracja po znanym
    * pokoju (funkcjonalnosc kalibratora pokoi) + rysowanie prostokata.
    * Kalibracja px->mm trzymana w localStorage (dzq-map-calib). */
-  /* Modal "Wlasna strefa": rysowanie jednorazowej powierzchni na mapie
-   * z kamery robota — prostokat (przeciagniecie) lub wielokat (min. 3
-   * punkty, robot dostaje prostokat obejmujacy). Kalibracja px->mm
-   * pochodzi z integracji (panel Zone Queue -> Kalibracja mapy). */
+  /* Modal "Wlasna strefa": rysowanie jednorazowej powierzchni na mapie.
+   * Przy PIERWSZYM uzyciu (albo po zmianie rozmiaru mapy / wyczyszczeniu
+   * kalibracji w opcjach integracji) modal sam prosi o kalibracje:
+   * obrysowanie jednego znanego pokoju. Przelicznik px->mm zapisuje sie
+   * w Store integracji (przezywa restarty HA, wspolny dla urzadzen). */
   _zoneDialog() {
     if (document.querySelector(".dzq-zone-modal")) return;
     const hass = this._hass;
@@ -329,7 +330,9 @@ class VacuumQueueCard extends HTMLElement {
     const camEnt = this._config.map_camera
       || ("camera." + (vac.split(".")[1] || "") + "_map");
     const cam = hass.states[camEnt];
-    const calib = attrs.map_calib || null;
+    let calib = attrs.map_calib || null;
+    const zones = attrs.room_zones || {};
+    const roomNames = Object.keys(zones).sort();
     const esc = (t) => String(t).replace(/&/g, "&amp;").replace(/</g, "&lt;");
 
     const wrap = document.createElement("div");
@@ -343,39 +346,161 @@ class VacuumQueueCard extends HTMLElement {
       "border-radius:16px;padding:18px;width:min(760px,100%);max-height:92vh;" +
       "display:flex;flex-direction:column;gap:10px;overflow:auto;" +
       "box-shadow:0 12px 40px rgba(0,0,0,.5);";
+    wrap.appendChild(box);
+    document.body.appendChild(wrap);
+    const close = () => wrap.remove();
+    wrap.addEventListener("click", (e) => { if (e.target === wrap) close(); });
+
     const selCss = "font:inherit;padding:6px 8px;border-radius:8px;" +
       "border:1px solid var(--divider-color,#444);" +
       "background:var(--primary-background-color,#111);color:inherit";
     const btnCss = "font:inherit;padding:8px 14px;border-radius:10px;border:none;cursor:pointer;";
-    const closeOnly = (msg) => {
-      box.innerHTML = `<h3 style="margin:0">▭ Własna strefa</h3>
-        <div style="line-height:1.5">${msg}</div>
-        <div style="display:flex;justify-content:flex-end"><button data-x="close"
-          style="${btnCss}background:var(--secondary-background-color,#333);color:inherit">Zamknij</button></div>`;
+    const btnOn = `${btnCss}background:var(--primary-color,#03a9f4);color:#fff`;
+    const btnOff = `${btnCss}background:var(--secondary-background-color,#333);color:inherit`;
+    const pic = cam ? (cam.attributes.entity_picture || "") : "";
+    const mapBlock = `
+      <div class="zwrap" style="position:relative;user-select:none;touch-action:none;line-height:0;overflow:hidden;border-radius:10px">
+        <img class="zimg" src="${pic}" draggable="false" style="width:100%;display:block">
+        <svg class="zsvg" style="position:absolute;inset:0;width:100%;height:100%;pointer-events:none"></svg>
+      </div>`;
+    const wireClose = () => {
+      const b = box.querySelector('[data-x="close"]');
+      if (b) b.onclick = close;
     };
+    const staleFor = (img) =>
+      calib && img.naturalWidth && calib.iw &&
+      Math.abs(calib.iw - img.naturalWidth) > 1;
+
     if (!cam) {
-      closeOnly(`Nie znalazłem kamery mapy (<code>${esc(camEnt)}</code>).
-        Ustaw <code>map_camera</code> w konfiguracji karty.`);
-    } else if (!calib) {
-      closeOnly(`Brak kalibracji mapy. Otwórz panel <b>Zone Queue</b>
-        (menu boczne) → zakładka <b>🎯 Kalibracja mapy</b> i obrysuj tam
-        jeden znany pokój — wystarczy raz.`);
-    } else {
-      const pic = cam.attributes.entity_picture || "";
+      box.innerHTML = `<h3 style="margin:0">▭ Własna strefa</h3>
+        <div style="line-height:1.5">Nie znalazłem kamery mapy
+        (<code>${esc(camEnt)}</code>). Ustaw <code>map_camera</code>
+        w konfiguracji karty.</div>
+        <div style="display:flex;justify-content:flex-end">
+        <button data-x="close" style="${btnOff}">Zamknij</button></div>`;
+      wireClose();
+      return;
+    }
+
+    /* ---------- FAZA 1: kalibracja (pierwsze uzycie / zmiana mapy) ------ */
+    const renderCalib = (note) => {
+      if (!roomNames.length) {
+        box.innerHTML = `<h3 style="margin:0">🎯 Kalibracja mapy</h3>
+          <div style="line-height:1.5">Brak zdefiniowanych pokoi ze strefami —
+          kalibracja potrzebuje jednego znanego pokoju (opcje integracji).</div>
+          <div style="display:flex;justify-content:flex-end">
+          <button data-x="close" style="${btnOff}">Zamknij</button></div>`;
+        wireClose();
+        return;
+      }
       box.innerHTML = `
-        <h3 style="margin:0;font-size:1.05em">▭ Własna strefa — narysuj na mapie</h3>
+        <h3 style="margin:0;font-size:1.05em">🎯 Pierwszy raz: kalibracja mapy</h3>
+        ${note ? `<div style="font-size:.9em;color:var(--warning-color,#ff9800)">${note}</div>` : ""}
+        <div style="font-size:.9em;line-height:1.5;color:var(--secondary-text-color)">
+          Wybierz pokój, którego położenie znasz, i obrysuj go na mapie.
+          Robisz to raz — przelicznik zapisze się w integracji i przeżyje
+          restarty HA.</div>
         <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;font-size:.9em">
-          <button data-x="mrect" style="${btnCss}background:var(--primary-color,#03a9f4);color:#fff">▭ Prostokąt</button>
-          <button data-x="mpoly" style="${btnCss}background:var(--secondary-background-color,#333);color:inherit">△ Wielokąt</button>
-          <button data-x="mundo" style="${btnCss}background:var(--secondary-background-color,#333);color:inherit">↩ Cofnij punkt</button>
-          <button data-x="mclear" style="${btnCss}background:var(--secondary-background-color,#333);color:inherit">Wyczyść</button>
+          <select class="croom" style="${selCss}">${roomNames.map((r) =>
+            `<option>${esc(r)}</option>`).join("")}</select>
+          <button data-x="crect" style="${btnOn}">▭ Prostokąt</button>
+          <button data-x="cpoly" style="${btnOff}">△ Punkty</button>
+          <button data-x="cundo" style="${btnOff};display:none">↩ Cofnij</button>
+          <button data-x="cdone" style="${btnOn};display:none">✓ Zakończ</button>
+        </div>
+        ${mapBlock}
+        <div class="chint" style="font-size:.88em;color:var(--secondary-text-color)">
+          Obrysuj: <b></b> · dwa palce / kółko = zoom i przesuwanie</div>
+        <div style="display:flex;justify-content:flex-end">
+          <button data-x="close" style="${btnOff}">Anuluj</button>
+        </div>`;
+      wireClose();
+      const img = box.querySelector(".zimg");
+      const zwrap = box.querySelector(".zwrap");
+      const roomSel = box.querySelector(".croom");
+      const hintRoom = box.querySelector(".chint b");
+      hintRoom.textContent = roomSel.value;
+      roomSel.onchange = () => { hintRoom.textContent = roomSel.value; };
+      const toNat = (x, y) => {
+        const f = img.naturalWidth / img.clientWidth;
+        return [x * f, y * f];
+      };
+      const draw = attachDraw(zwrap, img, box.querySelector(".zsvg"), {
+        shape: async (sh) => {
+          const z = zones[roomSel.value];
+          if (!z) return;
+          const nat = sh.pts.map((p) => toNat(p[0], p[1]));
+          const nL = Math.min(...nat.map((p) => p[0]));
+          const nR = Math.max(...nat.map((p) => p[0]));
+          const nT = Math.min(...nat.map((p) => p[1]));
+          const nB = Math.max(...nat.map((p) => p[1]));
+          if (nR - nL < 8 || nB - nT < 8) return;
+          const vxmin = Math.min(z[0], z[2]), vxmax = Math.max(z[0], z[2]);
+          const vymin = Math.min(z[1], z[3]), vymax = Math.max(z[1], z[3]);
+          // os Y odkurzacza rosnie do gory ekranu (Dreame) -> flip
+          const ax = (vxmax - vxmin) / (nR - nL);
+          const ay = (vymin - vymax) / (nB - nT);
+          const nc = { ax, bx: vxmin - ax * nL, ay, by: vymax - ay * nT,
+                       iw: img.naturalWidth, ih: img.naturalHeight };
+          try {
+            await hass.callApi("post", "dreame_zone_queue/map_calib", { calib: nc });
+            calib = nc;
+            this._toast("✓ Kalibracja zapisana");
+            renderDraw();
+          } catch (err) {
+            this._toast("Błąd zapisu kalibracji: " + err);
+          }
+        },
+      });
+      const mr = box.querySelector('[data-x="crect"]');
+      const mp = box.querySelector('[data-x="cpoly"]');
+      const mu = box.querySelector('[data-x="cundo"]');
+      const md = box.querySelector('[data-x="cdone"]');
+      const setMode = (m) => {
+        draw.setMode(m);
+        mr.style.cssText = m === "rect" ? btnOn : btnOff;
+        mp.style.cssText = m === "poly" ? btnOn : btnOff;
+        mu.style.display = m === "poly" ? "" : "none";
+        md.style.display = m === "poly" ? "" : "none";
+      };
+      mr.onclick = () => setMode("rect");
+      mp.onclick = () => setMode("poly");
+      mu.onclick = () => draw.undo();
+      md.onclick = () => {
+        if (!draw.finish()) this._toast("Wielokąt wymaga min. 3 punktów");
+      };
+      zwrap.addEventListener("dblclick", () => {
+        if (draw.getMode() === "poly") md.onclick();
+      });
+      setMode(defaultMode());
+    };
+
+    /* ---------- FAZA 2: rysowanie strefy ------------------------------- */
+    const renderDraw = () => {
+      box.innerHTML = `
+        <h3 style="margin:0;font-size:1.05em;display:flex;align-items:center;gap:8px">
+          ▭ Własna strefa — narysuj na mapie
+          <button data-x="help" title="Co zrobić, gdy mapa się rozkalibruje?"
+            style="font:inherit;width:24px;height:24px;border-radius:50%;border:1px solid var(--divider-color,#444);
+            background:none;color:var(--secondary-text-color);cursor:pointer;line-height:1">?</button>
+        </h3>
+        <div class="zhelp" style="display:none;font-size:.88em;line-height:1.55;padding:10px 12px;
+          border-radius:10px;background:var(--secondary-background-color,rgba(127,127,127,.15))">
+          <b>Mapa się rozkalibrowała?</b> (strefy trafiają obok narysowanego
+          miejsca) → Ustawienia → Urządzenia i usługi → <b>Dreame Zone
+          Queue</b> → ⚙ Konfiguruj → <b>Kalibracja mapy</b> → zaznacz
+          „Wyczyść kalibrację". Przy następnym otwarciu tego okna karta
+          poprosi o ponowne obrysowanie znanego pokoju. Gdy robot zmieni
+          rozmiar mapy, to okno samo przełączy się w tryb kalibracji.
+        </div>
+        <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;font-size:.9em">
+          <button data-x="mrect" style="${btnOn}">▭ Prostokąt</button>
+          <button data-x="mpoly" style="${btnOff}">△ Wielokąt</button>
+          <button data-x="mundo" style="${btnOff};display:none">↩ Cofnij punkt</button>
+          <button data-x="mclear" style="${btnOff}">Wyczyść</button>
           <span class="zhint" style="color:var(--secondary-text-color)"></span>
         </div>
-        <div class="zwrap" style="position:relative;user-select:none;touch-action:none;line-height:0">
-          <img class="zimg" src="${pic}" draggable="false"
-            style="width:100%;border-radius:10px;display:block">
-          <svg class="zsvg" style="position:absolute;inset:0;width:100%;height:100%;pointer-events:none"></svg>
-        </div>
+        ${mapBlock}
         <div class="zinfo" style="font-size:.9em;color:var(--secondary-text-color)"></div>
         <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap">
           <input class="zname" placeholder="Nazwa (np. Pod stołem)" style="${selCss};flex:1;min-width:120px">
@@ -387,129 +512,119 @@ class VacuumQueueCard extends HTMLElement {
             `<option value="${o}">${o}×</option>`).join("")}</select>
         </div>
         <div style="display:flex;justify-content:flex-end;gap:8px">
-          <button data-x="close" style="${btnCss}background:var(--secondary-background-color,#333);color:inherit">Anuluj</button>
-          <button data-x="done" style="${btnCss}background:var(--secondary-background-color,#333);color:inherit;display:none">✓ Zakończ kształt</button>
+          <button data-x="close" style="${btnOff}">Anuluj</button>
+          <button data-x="done" style="${btnOff};display:none">✓ Zakończ kształt</button>
           <button data-x="ok" disabled style="${btnCss}font-weight:600;background:var(--primary-color,#03a9f4);color:#fff;opacity:.5">+ Dodaj do kolejki</button>
         </div>`;
-    }
-    wrap.appendChild(box);
-    document.body.appendChild(wrap);
-    const close = () => wrap.remove();
-    wrap.addEventListener("click", (e) => { if (e.target === wrap) close(); });
-    box.querySelector('[data-x="close"]').onclick = close;
-    if (!cam || !calib) return;
+      wireClose();
+      box.querySelector('[data-x="help"]').onclick = () => {
+        const h = box.querySelector(".zhelp");
+        h.style.display = h.style.display === "none" ? "" : "none";
+      };
 
-    const img = box.querySelector(".zimg");
-    const zwrap = box.querySelector(".zwrap");
-    const svg = box.querySelector(".zsvg");
-    const info = box.querySelector(".zinfo");
-    const hint = box.querySelector(".zhint");
-    const okBtn = box.querySelector('[data-x="ok"]');
-    const doneBtn = box.querySelector('[data-x="done"]');
-    const mrect = box.querySelector('[data-x="mrect"]');
-    const mpoly = box.querySelector('[data-x="mpoly"]');
-    const undoBtn = box.querySelector('[data-x="mundo"]');
-    zwrap.style.overflow = "hidden";
-    zwrap.style.borderRadius = "10px";
-    let zoneMm = null;       // wynik [x1,y1,x2,y2]
+      const img = box.querySelector(".zimg");
+      const zwrap = box.querySelector(".zwrap");
+      const info = box.querySelector(".zinfo");
+      const hint = box.querySelector(".zhint");
+      const okBtn = box.querySelector('[data-x="ok"]');
+      const doneBtn = box.querySelector('[data-x="done"]');
+      const mrect = box.querySelector('[data-x="mrect"]');
+      const mpoly = box.querySelector('[data-x="mpoly"]');
+      const undoBtn = box.querySelector('[data-x="mundo"]');
+      let zoneMm = null;
 
-    const staleCalib = () =>
-      img.naturalWidth && calib.iw && Math.abs(calib.iw - img.naturalWidth) > 1;
-    const toNat = (x, y) => {
-      const f = img.naturalWidth / img.clientWidth;
-      return [x * f, y * f];
-    };
-    const toMm = (nx, ny) => {
-      const r = (v) => Math.round(v / 10) * 10;
-      return [r(calib.ax * nx + calib.bx), r(calib.ay * ny + calib.by)];
-    };
-    const bboxToMm = (dispPts) => {
-      const mm = dispPts.map((p) => toMm(...toNat(p[0], p[1])));
-      const xs = mm.map((p) => p[0]), ys = mm.map((p) => p[1]);
-      return [Math.min(...xs), Math.min(...ys), Math.max(...xs), Math.max(...ys)];
-    };
-    const acceptZone = (z, note) => {
-      const wMm = z[2] - z[0], hMm = z[3] - z[1];
-      if (wMm < 120 || hMm < 120) {
-        info.textContent = "⚠ Strefa za mała (min 120 mm na bok) — narysuj większą.";
+      img.onload = () => {
+        if (staleFor(img)) {
+          renderCalib("Mapa zmieniła rozmiar od ostatniej kalibracji — " +
+            "obrysuj znany pokój jeszcze raz.");
+        }
+      };
+      const toNat = (x, y) => {
+        const f = img.naturalWidth / img.clientWidth;
+        return [x * f, y * f];
+      };
+      const toMm = (nx, ny) => {
+        const r = (v) => Math.round(v / 10) * 10;
+        return [r(calib.ax * nx + calib.bx), r(calib.ay * ny + calib.by)];
+      };
+      const bboxToMm = (dispPts) => {
+        const mm = dispPts.map((p) => toMm(...toNat(p[0], p[1])));
+        const xs = mm.map((p) => p[0]), ys = mm.map((p) => p[1]);
+        return [Math.min(...xs), Math.min(...ys), Math.max(...xs), Math.max(...ys)];
+      };
+      const acceptZone = (z, note) => {
+        const wMm = z[2] - z[0], hMm = z[3] - z[1];
+        if (wMm < 120 || hMm < 120) {
+          info.textContent = "⚠ Strefa za mała (min 120 mm na bok) — narysuj większą.";
+          zoneMm = null;
+          okBtn.disabled = true;
+          okBtn.style.opacity = ".5";
+          return;
+        }
+        zoneMm = z;
+        info.textContent = `Strefa: [${z.join(", ")}] · ` +
+          `${(wMm / 1000).toFixed(1)} × ${(hMm / 1000).toFixed(1)} m${note || ""}`;
+        okBtn.disabled = false;
+        okBtn.style.opacity = "1";
+      };
+      const draw = attachDraw(zwrap, img, box.querySelector(".zsvg"), {
+        shape: (sh) => acceptZone(bboxToMm(sh.pts),
+          sh.kind === "poly" ? " · (prostokąt obejmujący wielokąt)" : ""),
+        progress: (n) => {
+          if (draw && draw.getMode() === "poly" && n > 0 && n < 3) {
+            info.textContent = `Punkty: ${n}/3 (minimum)`;
+          }
+        },
+      });
+      const setMode = (m) => {
+        draw.setMode(m);
         zoneMm = null;
+        info.textContent = "";
         okBtn.disabled = true;
         okBtn.style.opacity = ".5";
-        return;
-      }
-      zoneMm = z;
-      info.textContent = `Strefa: [${z.join(", ")}] · ` +
-        `${(wMm / 1000).toFixed(1)} × ${(hMm / 1000).toFixed(1)} m${note || ""}`;
-      okBtn.disabled = false;
-      okBtn.style.opacity = "1";
-    };
-
-    const draw = attachDraw(zwrap, img, svg, {
-      shape: (sh) => acceptZone(bboxToMm(sh.pts),
-        sh.kind === "poly" ? " · (prostokąt obejmujący wielokąt)" : ""),
-      progress: (n) => {
-        if (draw && draw.getMode() === "poly" && n > 0 && n < 3) {
-          info.textContent = `Punkty: ${n}/3 (minimum)`;
-        }
-      },
-    });
-
-    const refreshHint = () => {
-      if (staleCalib()) {
-        hint.textContent = "⚠ Mapa zmieniła rozmiar — ponów kalibrację w panelu Zone Queue.";
-      } else {
-        hint.textContent = (draw.getMode() === "rect"
+        mrect.style.cssText = m === "rect" ? btnOn : btnOff;
+        mpoly.style.cssText = m === "poly" ? btnOn : btnOff;
+        doneBtn.style.display = m === "poly" ? "" : "none";
+        undoBtn.style.display = m === "poly" ? "" : "none";
+        hint.textContent = (m === "rect"
           ? "Przeciągnij prostokąt po mapie."
           : "Tapnij narożniki (min. 3), potem „Zakończ kształt”.") +
-          " Dwa palce / kółko = zoom i przesuwanie.";
-      }
-    };
-    img.onload = refreshHint;
-
-    const setMode = (m) => {
-      draw.setMode(m);
-      zoneMm = null;
-      info.textContent = "";
-      okBtn.disabled = true;
-      okBtn.style.opacity = ".5";
-      mrect.style.background = m === "rect" ? "var(--primary-color,#03a9f4)" : "var(--secondary-background-color,#333)";
-      mrect.style.color = m === "rect" ? "#fff" : "inherit";
-      mpoly.style.background = m === "poly" ? "var(--primary-color,#03a9f4)" : "var(--secondary-background-color,#333)";
-      mpoly.style.color = m === "poly" ? "#fff" : "inherit";
-      doneBtn.style.display = m === "poly" ? "" : "none";
-      undoBtn.style.display = m === "poly" ? "" : "none";
-      refreshHint();
-    };
-    mrect.onclick = () => setMode("rect");
-    mpoly.onclick = () => setMode("poly");
-    undoBtn.onclick = () => draw.undo();
-    box.querySelector('[data-x="mclear"]').onclick = () => {
-      draw.clear();
-      zoneMm = null;
-      info.textContent = "";
-      okBtn.disabled = true;
-      okBtn.style.opacity = ".5";
-    };
-    doneBtn.onclick = () => {
-      if (!draw.finish()) info.textContent = "⚠ Wielokąt wymaga min. 3 punktów.";
-    };
-    zwrap.addEventListener("dblclick", () => {
-      if (draw.getMode() === "poly") doneBtn.onclick();
-    });
-    setMode(defaultMode());
-
-    okBtn.onclick = () => {
-      if (!zoneMm) return;
-      this._call("add", {
-        room: box.querySelector(".zname").value.trim() || "Strefa",
-        zone: zoneMm,
-        suction: box.querySelector(".zsuction").value,
-        water: box.querySelector(".zwater").value,
-        repeats: Number(box.querySelector(".zrepeats").value),
+          " Dwa palce / kółko = zoom.";
+      };
+      mrect.onclick = () => setMode("rect");
+      mpoly.onclick = () => setMode("poly");
+      undoBtn.onclick = () => draw.undo();
+      box.querySelector('[data-x="mclear"]').onclick = () => {
+        draw.clear();
+        zoneMm = null;
+        info.textContent = "";
+        okBtn.disabled = true;
+        okBtn.style.opacity = ".5";
+      };
+      doneBtn.onclick = () => {
+        if (!draw.finish()) info.textContent = "⚠ Wielokąt wymaga min. 3 punktów.";
+      };
+      zwrap.addEventListener("dblclick", () => {
+        if (draw.getMode() === "poly") doneBtn.onclick();
       });
-      close();
-      this._toast("✓ Strefa dodana do kolejki");
+      setMode(defaultMode());
+
+      okBtn.onclick = () => {
+        if (!zoneMm) return;
+        this._call("add", {
+          room: box.querySelector(".zname").value.trim() || "Strefa",
+          zone: zoneMm,
+          suction: box.querySelector(".zsuction").value,
+          water: box.querySelector(".zwater").value,
+          repeats: Number(box.querySelector(".zrepeats").value),
+        });
+        close();
+        this._toast("✓ Strefa dodana do kolejki");
+      };
     };
+
+    if (!calib) renderCalib();
+    else renderDraw();
   }
   _toast(msg) {
     document.querySelectorAll(".dzq-toast").forEach((t) => t.remove());

@@ -4,6 +4,23 @@ Wszystkie istotne zmiany w projekcie. Format oparty o
 [Keep a Changelog](https://keepachangelog.com/pl/1.1.0/),
 wersjonowanie zgodne z [SemVer](https://semver.org/lang/pl/).
 
+## [2.0.0-beta.20] - 2026-07-27
+
+### Zmienione — kalibracja przy pierwszym użyciu, prosto z karty
+- **„▭ Własna strefa" sam prosi o kalibrację**: przy pierwszym użyciu
+  (oraz gdy robot zmieni rozmiar mapy) modal pokazuje krok kalibracji —
+  wybór znanego pokoju i obrysowanie go (prostokątem lub punktami).
+  Po zapisie od razu przechodzi do rysowania strefy. Kalibracja
+  zapisuje się w integracji (Store) i **przeżywa restarty HA**.
+- **Znak „?" w oknie rysowania**: instrukcja co zrobić, gdy mapa się
+  rozkalibruje (reset w opcjach integracji), i informacja, że przy
+  zmianie rozmiaru mapy okno samo wróci do kalibracji.
+- **Reset kalibracji w opcjach integracji** (⚙ Konfiguruj →
+  „Kalibracja mapy"): pokazuje stan kalibracji i pozwala ją wyczyścić
+  — karta poprosi o nową przy następnym użyciu „Własnej strefy".
+- **Panel „Zone Queue" wrócił do samych logów** — zakładka kalibracji
+  usunięta (kalibracja żyje teraz w karcie i opcjach integracji).
+
 ## [2.0.0-beta.19] - 2026-07-27
 
 ### Dodane — statystyki globalne w karcie historii kolejek
