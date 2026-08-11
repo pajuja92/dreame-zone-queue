@@ -3,10 +3,13 @@
  * lista pokoi z wynikami + mapka z zaznaczonymi strefami. Strzałki / lista
  * rozwijana przełączają między poprzednimi kolejkami.
  *
- * Konfiguracja:
+ * Konfiguracja (wszystko ustawialne w wizualnym edytorze Lovelace):
  *   type: custom:vacuum-session-card
  *   title: Historia kolejek       (opcjonalnie)
  *   map_camera: camera.xxx_map    (opcjonalnie — domyślnie camera.<robot>_map)
+ *   width: 600px                  (opcjonalnie — maks. szerokość karty)
+ *   compact: true                 (opcjonalnie — mniejsza czcionka/odstępy)
+ *   layout: right | below         (opcjonalnie — mapa po prawej / pod listą)
  *
  * Dane: GET /api/dreame_zone_queue/history (sessions + current)
  *       GET /api/dreame_zone_queue/map_calib (przelicznik mm→px do mapki).
@@ -112,9 +115,14 @@ class VacuumSessionCard extends HTMLElement {
         ${when} · ${(s.runs || []).length} pokoi${state}</option>`;
     }).join("");
 
+    const compact = !!this._config.compact;
+    const below = this._config.layout === "below";
+    const widthCss = this._config.width
+      ? `max-width: ${this._esc(this._config.width)}; margin: 0 auto;` : "";
     this.shadowRoot.innerHTML = `
       <style>
-        ha-card { padding: 14px 16px 16px; }
+        ha-card { padding: ${compact ? "10px 12px 12px" : "14px 16px 16px"};
+                  ${widthCss} }
         .hdr { display: flex; align-items: center; gap: 8px; flex-wrap: wrap;
                margin-bottom: 10px; }
         .hdr h2 { flex: 1; margin: 0; font-size: 1.15em; font-weight: 500;
@@ -127,13 +135,18 @@ class VacuumSessionCard extends HTMLElement {
                border: 1px solid var(--divider-color);
                background: var(--card-background-color);
                color: var(--primary-text-color); max-width: 300px; }
-        .cols { display: flex; gap: 14px; flex-wrap: wrap; align-items: flex-start; }
-        .list { flex: 1; min-width: 230px; }
-        .maps { flex: 1.3; min-width: 260px; position: relative; line-height: 0; }
+        .cols { display: flex; gap: ${compact ? "10px" : "14px"};
+               ${below ? "flex-direction: column;" : "flex-wrap: wrap;"}
+               align-items: ${below ? "stretch" : "flex-start"}; }
+        .list { flex: 1; min-width: ${below ? "0" : "230px"}; }
+        .maps { flex: 1.3; min-width: ${below ? "0" : "260px"};
+               position: relative; line-height: 0; }
         .maps img { width: 100%; border-radius: 10px; display: block; }
         .maps svg { position: absolute; inset: 0; width: 100%; height: 100%; }
-        table { width: 100%; border-collapse: collapse; font-size: .92em; }
-        td { padding: 6px 8px; border-bottom: 1px solid var(--divider-color); }
+        table { width: 100%; border-collapse: collapse;
+                font-size: ${compact ? ".82em" : ".92em"}; }
+        td { padding: ${compact ? "4px 6px" : "6px 8px"};
+             border-bottom: 1px solid var(--divider-color); }
         td.num { width: 26px; color: var(--secondary-text-color); }
         td.st { white-space: nowrap; }
         .sub { color: var(--secondary-text-color); font-size: .85em; }
@@ -141,7 +154,8 @@ class VacuumSessionCard extends HTMLElement {
         .empty { padding: 18px 6px; color: var(--secondary-text-color); }
         .gstats { display: flex; gap: 6px; flex-wrap: wrap; margin-bottom: 10px; }
         .gstats .chip { border: 1px solid var(--divider-color); border-radius: 14px;
-               padding: 3px 10px; font-size: .82em;
+               padding: ${compact ? "2px 8px" : "3px 10px"};
+               font-size: ${compact ? ".76em" : ".82em"};
                color: var(--secondary-text-color); }
         .live { margin-bottom: 10px; padding: 8px 12px; border-radius: 10px;
                font-size: .9em; background: rgba(52,152,219,.14);
@@ -302,7 +316,112 @@ class VacuumSessionCard extends HTMLElement {
   }
 }
 
+VacuumSessionCard.getConfigElement = function () {
+  return document.createElement("vacuum-session-card-editor");
+};
+
+/* Wizualny edytor konfiguracji (GUI w edytorze Lovelace) */
+class VacuumSessionCardEditor extends HTMLElement {
+  setConfig(config) {
+    this._config = { ...(config || {}) };
+    this._render();
+  }
+  set hass(_h) {}
+
+  _emit() {
+    this.dispatchEvent(new CustomEvent("config-changed", {
+      detail: { config: this._config },
+      bubbles: true,
+      composed: true,
+    }));
+  }
+
+  _render() {
+    if (!this.shadowRoot) this.attachShadow({ mode: "open" });
+    const c = this._config;
+    this.shadowRoot.innerHTML = `
+      <style>
+        :host { display: block; }
+        .row { display: flex; gap: 10px; margin-bottom: 12px; flex-wrap: wrap; }
+        .row > div { flex: 1; min-width: 160px; }
+        label.f { display: block; font-size: .8em;
+                  color: var(--secondary-text-color); margin-bottom: 3px; }
+        input, select { width: 100%; box-sizing: border-box;
+                  padding: 8px 10px; border-radius: 6px;
+                  border: 1px solid var(--divider-color);
+                  background: var(--card-background-color);
+                  color: var(--primary-text-color); font: inherit; }
+        .chk { display: inline-flex; align-items: center; gap: 6px;
+               margin-top: 20px; cursor: pointer; }
+        .hint { font-size: .78em; color: var(--secondary-text-color);
+                margin-top: -6px; margin-bottom: 8px; }
+      </style>
+      <div class="row">
+        <div>
+          <label class="f">Tytuł karty</label>
+          <input type="text" id="title" value="${(c.title || "").replace(/"/g, "&quot;")}">
+        </div>
+        <div>
+          <label class="f">Maks. szerokość karty</label>
+          <select id="width">
+            <option value="">auto (cała dostępna)</option>
+            <option value="400px">400 px</option>
+            <option value="500px">500 px</option>
+            <option value="600px">600 px</option>
+            <option value="800px">800 px</option>
+            <option value="1000px">1000 px</option>
+          </select>
+        </div>
+      </div>
+      <div class="row">
+        <div>
+          <label class="f">Położenie mapy</label>
+          <select id="layout">
+            <option value="right">po prawej (obok listy)</option>
+            <option value="below">pod spodem (pod listą)</option>
+          </select>
+        </div>
+        <div>
+          <label class="f">Kamera mapy (puste = automatycznie)</label>
+          <input type="text" id="cam" placeholder="camera.robot_map"
+            value="${(c.map_camera || "").replace(/"/g, "&quot;")}">
+        </div>
+        <label class="chk"><input type="checkbox" id="compact"
+          ${c.compact ? "checked" : ""}> Tryb kompaktowy</label>
+      </div>
+      <div class="hint">Szerokość to górny limit — na węższych ekranach karta
+        i tak się dopasuje. „Po prawej" na wąskich ekranach automatycznie
+        łamie się pod listę.</div>`;
+    const r = this.shadowRoot;
+    const width = r.getElementById("width");
+    width.value = c.width || "";
+    const layout = r.getElementById("layout");
+    layout.value = c.layout === "below" ? "below" : "right";
+    r.getElementById("title").onchange = (e) => {
+      this._config.title = e.target.value || undefined;
+      this._emit();
+    };
+    width.onchange = (e) => {
+      this._config.width = e.target.value || undefined;
+      this._emit();
+    };
+    layout.onchange = (e) => {
+      this._config.layout = e.target.value === "below" ? "below" : undefined;
+      this._emit();
+    };
+    r.getElementById("cam").onchange = (e) => {
+      this._config.map_camera = e.target.value.trim() || undefined;
+      this._emit();
+    };
+    r.getElementById("compact").onchange = (e) => {
+      this._config.compact = e.target.checked || undefined;
+      this._emit();
+    };
+  }
+}
+
 customElements.define("vacuum-session-card", VacuumSessionCard);
+customElements.define("vacuum-session-card-editor", VacuumSessionCardEditor);
 window.customCards = window.customCards || [];
 window.customCards.push({
   type: "vacuum-session-card",

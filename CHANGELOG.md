@@ -4,6 +4,37 @@ Wszystkie istotne zmiany w projekcie. Format oparty o
 [Keep a Changelog](https://keepachangelog.com/pl/1.1.0/),
 wersjonowanie zgodne z [SemVer](https://semver.org/lang/pl/).
 
+## [2.0.0-beta.22] - 2026-08-11
+
+### Naprawione (log 11.08 — „ładowanie nie zostało zanotowane")
+- **Powód przerwania aktualizuje się, gdy przyczyna się zmienia**:
+  robot najpierw raportuje powrót do bazy, a dopiero po zadokowaniu
+  ładowanie — etykieta zostawała na „wraca do bazy", przez co
+  19-minutowa przerwa na ładowanie w środku Korytarza: nie pojawiła
+  się w kolumnie Uwagi (powroty do bazy są filtrowane), nie zwiększyła
+  licznika powrotów i nie wykluczyła zawyżonego czasu ze statystyk
+  ETA. Teraz zmiana przyczyny (np. powrót→ładowanie, dojazd→mycie
+  mopa) zamyka stary epizod, otwiera nowy z właściwym powodem
+  (`REASON_CHANGE` w logu), aktualizuje licznik powrotów (bez
+  podwójnego liczenia) i etykietę na karcie, a czas przerwy serwisowej
+  wyklucza przebieg ze średniej ETA.
+
+### Testy
+- Scenariusz z logu: powrót→ładowanie 19 min→wznowienie→done, wpis
+  „ładowanie" w Uwagach, returns=1, statystyki pominięte (43 łącznie).
+
+## [2.0.0-beta.21] - 2026-07-27
+
+### Dodane — ustawienia wizualne karty historii kolejek
+- **Wizualny edytor konfiguracji** `vacuum-session-card` (GUI w edytorze
+  Lovelace): tytuł, maks. szerokość karty (auto / 400–1000 px,
+  wyśrodkowana), tryb kompaktowy (mniejsza czcionka i odstępy),
+  encja kamery mapy.
+- **Położenie mapy do wyboru**: „po prawej" (obok listy, domyślnie;
+  na wąskich ekranach łamie się samo) albo „pod spodem" (mapa na całą
+  szerokość pod listą). W YAML: `layout: right | below`, `width`,
+  `compact`, `map_camera`.
+
 ## [2.0.0-beta.20] - 2026-07-27
 
 ### Zmienione — kalibracja przy pierwszym użyciu, prosto z karty

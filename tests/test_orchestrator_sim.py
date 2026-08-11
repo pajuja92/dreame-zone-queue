@@ -772,6 +772,41 @@ async def test_history_records_side_events_with_duration():
     assert 115 <= ev[0]["dur"] <= 125
 
 
+async def test_reason_updates_when_return_becomes_charging():
+    """Log 11.08: powrot do bazy przeszedl w ladowanie — powod, licznik
+    powrotow, Uwagi i wykluczenie ze statystyk musza to odnotowac."""
+    hass, m = mk()
+    await m.async_setup()
+    await m.async_add("Salon")
+    hass.states[VAC] = st("docked", **TASK_DONE)
+    await m.async_start()
+    item = m.queue[0]
+    # robot przerywa pokoj i jedzie do bazy (ladowanie w polowie zadania)
+    going = dict(running=True, returning=True, zone_cleaning=True,
+                 started=True, resume_cleaning=True)
+    send(m, st("cleaning", **CLEANING), st("returning", **going))
+    assert item["reason"] == "wraca do bazy"
+    assert item.get("dock_returns", 0) == 0
+    # dokowanie + ladowanie -> powod MUSI sie zaktualizowac
+    charging = dict(running=False, paused=True, charging=True,
+                    zone_cleaning=True, started=True, resume_cleaning=True)
+    send(m, st("returning", **going), st("paused", **charging))
+    assert item["reason"] == "ładowanie"
+    assert item["dock_returns"] == 1 and item["was_interrupted"]
+    item["events"][-1]["since"] -= 19 * 60  # ladowal sie ~19 min
+    # wznowienie i normalne zakonczenie
+    send(m, st("paused", **charging), st("cleaning", **CLEANING))
+    assert not item["interrupted"]
+    send(m, st("cleaning", **CLEANING),
+         st("returning", cleaned_area=3, **TASK_DONE))
+    await drain()
+    run = m.history["Salon"][-1]
+    assert run["outcome"] == "done" and run["returns"] == 1
+    assert any(e["reason"] == "ładowanie" and e["dur"] >= 18 * 60
+               for e in run["events"])
+    assert "Salon" not in m.stats  # czas z ladowaniem nie zatruwa ETA
+
+
 async def test_session_report_lifecycle():
     """Kolejka start->koniec = jedna sesja z przebiegami i strefami."""
     hass, m = mk()

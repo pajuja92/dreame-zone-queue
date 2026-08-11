@@ -1199,8 +1199,7 @@ class QueueManager:
         # zapisalyby sie NIGDY (guard w _finish_item je pomija)
         if reason != "wraca do bazy":
             item["was_interrupted"] = True
-        if reason in ("mycie mopa", "jedzie myć mopa", "suszenie mopa",
-                      "ładowanie", "opróżnianie kurzu"):
+        if reason in self._DOCK_REASONS:
             # przerwy serwisowe w doku — "ile powrotow do bazy" w historii
             item["dock_returns"] = item.get("dock_returns", 0) + 1
         # epizod poboczny do kolumny "Uwagi" w historii (zamykany po RESUMED)
@@ -1358,6 +1357,35 @@ class QueueManager:
             self._schedule_watchdog()
         else:
             self._schedule_dispatch(self.delay_between_s)
+
+    _DOCK_REASONS = ("mycie mopa", "jedzie myć mopa", "suszenie mopa",
+                     "ładowanie", "opróżnianie kurzu")
+
+    def _refresh_interrupt_reason(self, item: dict, attrs: dict) -> None:
+        """Przyczyna przerwania zmienia sie w trakcie (log 11.08: powrot
+        do bazy przeszedl w 19 min ladowania, a etykieta zostala "wraca
+        do bazy" — ladowanie zniknelo z Uwag, powrotow i nie wykluczylo
+        czasu ze statystyk). Zamykamy stary epizod i otwieramy nowy."""
+        if not item.get("interrupted"):
+            return
+        new_reason = self._interrupt_reason(attrs)
+        old_reason = item.get("reason")
+        if new_reason == old_reason:
+            return
+        self._close_event(item)
+        item["reason"] = new_reason
+        if new_reason != "wraca do bazy":
+            # realna przerwa serwisowa/reczna: czas pokoju nie moze
+            # trafic do sredniej ETA
+            item["was_interrupted"] = True
+        if (new_reason in self._DOCK_REASONS
+                and old_reason not in self._DOCK_REASONS):
+            item["dock_returns"] = item.get("dock_returns", 0) + 1
+        item.setdefault("events", []).append(
+            {"reason": new_reason, "since": time.time()})
+        _LOGGER.warning("DZQ_DECISION | REASON_CHANGE | room=%s %s → %s",
+                        item["room"], old_reason, new_reason)
+        self._notify()
 
     def _finish_item(self, item: dict, why: str, state_str: str) -> None:
         """Mark the active item done and (if running) line up the next one."""
@@ -1542,6 +1570,7 @@ class QueueManager:
             if not item.get("interrupted"):
                 self._mark_interrupted(item, self._interrupt_reason(a))
             else:
+                self._refresh_interrupt_reason(item, a)
                 # Ostrzezenie PRZED porzuceniem zadania przez firmware
                 # (~30 min RECZNEJ pauzy). Mycie / suszenie / auto-pauza
                 # przy niskiej baterii (cleaning_paused) to legalne przerwy
@@ -1717,6 +1746,10 @@ class QueueManager:
                 self._mark_interrupted(item, self._interrupt_reason(na),
                                        notify_user=True)
             return
+
+        # Przyczyna przerwania mogla sie zmienic (powrot -> ladowanie).
+        if item.get("interrupted") and self._task_interrupted(new):
+            self._refresh_interrupt_reason(item, na)
 
         # Robot znow sprzata po serwisowej przerwie -> zdejmij flage.
         if item.get("interrupted") and self._task_running(new):
