@@ -29,6 +29,7 @@ from .const import (
     CONF_TASK_SENSOR,
     CONF_VACUUM_ENTITY,
     CONF_WAIT_WASH,
+    CONF_NOTIFY_SERVICE,
     CONF_WATER_SELECT,
     DEFAULT_DELAY_BETWEEN_S,
     DEFAULT_GRACE_S,
@@ -373,6 +374,10 @@ class DreameZoneQueueOptionsFlow(config_entries.OptionsFlow):
                     CONF_TASK_SENSOR,
                     description={"suggested_value": o.get(CONF_TASK_SENSOR)},
                 ): EntitySelector(EntitySelectorConfig(domain="sensor")),
+                vol.Optional(
+                    CONF_NOTIFY_SERVICE,
+                    description={"suggested_value": o.get(CONF_NOTIFY_SERVICE)},
+                ): TextSelector(),
                 vol.Optional(
                     CONF_SUCTION_SELECT,
                     description={"suggested_value": o.get(CONF_SUCTION_SELECT)},

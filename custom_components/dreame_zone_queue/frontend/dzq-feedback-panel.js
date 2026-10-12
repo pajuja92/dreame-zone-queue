@@ -1,6 +1,7 @@
 /* Panel boczny "Zone Queue" — dziennik feedbacku
- * (/config/dreame_zone_queue_feedback.log). Plik na dysku ZAWSZE pełny,
- * widok/pobranie "diff" liczy różnice w locie. Kalibracja mapy odbywa się
+ * (/config/dreame_zone_queue_feedback.log). Plik ma pełny zrzut atrybutów
+ * co ~100 wpisów, pomiędzy same zmiany (attrs_diff=) — _parse składa z nich
+ * pełny stan, a widok/pobranie "diff" liczy różnice w locie. Kalibracja mapy odbywa się
  * w karcie ("Własna strefa" przy pierwszym użyciu), reset w opcjach
  * integracji. */
 
@@ -142,6 +143,7 @@ class DzqFeedbackPanel extends HTMLElement {
   /* linia -> {raw, when("YYYY-MM-DDTHH:MM:SS"), tag, head, attrs|null} */
   _parse(raw) {
     const out = [];
+    let state = null; // pełny stan złożony z attrs= i kolejnych attrs_diff=
     for (const line of raw.split("\n")) {
       if (!line.trim()) continue;
       const m = line.match(/^(\d{4}-\d\d-\d\d) (\d\d:\d\d:\d\d)[,.]\d+\s(.*)$/);
@@ -158,11 +160,20 @@ class DzqFeedbackPanel extends HTMLElement {
       const tag = rest.includes(" | ") && seg.length <= 24 && !seg.includes("=")
         ? seg : "INNE";
       let head = line, attrs = null;
-      const am = rest.match(/^(.*?\| attrs=)(\{.*\})\s*$/);
+      const am = rest.match(/^(.*?\| )attrs(_diff)?=(\{.*\})\s*$/);
       if (am) {
         try {
-          attrs = JSON.parse(am[2]);
-          head = `${m[1]} ${m[2]} ${am[1]}`;
+          const obj = JSON.parse(am[3]);
+          if (am[2] && state) {
+            state = { ...state, ...obj };
+            for (const k of obj._removed || []) delete state[k];
+            delete state._removed;
+          } else {
+            // pełny zrzut — albo zmiany bez bazy (początek okna): częściowy
+            state = obj;
+          }
+          attrs = state;
+          head = `${m[1]} ${m[2]} ${am[1]}attrs=`;
         } catch (_e) { /* zostaje pełna linia */ }
       }
       out.push({ raw: line, when, tag, head, attrs });

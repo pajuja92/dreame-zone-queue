@@ -78,7 +78,11 @@
           "water_select_entity": "Mop humidity select entity",
           "cleaning_mode_select_entity": "Cleaning mode select entity (default: derived from vacuum)",
           "wait_wash_between_rooms": "Wait for mop washing between rooms",
-          "task_status_sensor": "Dreame task_status sensor (default: derived from vacuum)"
+          "task_status_sensor": "Dreame task_status sensor (default: derived from vacuum)",
+          "notify_service": "Push notification service (optional)"
+        },
+        "data_description": {
+          "notify_service": "e.g. notify.mobile_app_phone — phone alert when the robot errors, gets stuck or sits paused (repeated after 10 min of error)."
         }
       },
       "bulk_edit": {

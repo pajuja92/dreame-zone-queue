@@ -175,6 +175,26 @@ type: custom:vacuum-queue-card
 entity: sensor.vacuum_zone_queue
 ```
 
+### Diagnostyka robota (`custom:vacuum-insights-card`)
+
+Mapa miejsc, w których robot najczęściej ma problemy (błędy, utknięcia,
+ręczne zatrzymania — z pozycją robota zapisaną przy każdym incydencie),
+podział czasu kolejek (sprzątanie / ładowanie / mycie mopa / błędy),
+efektywność pokoi (m²/min, % baterii, odsetek nieudanych przebiegów) oraz
+rekomendacje: które pokoje szybciej zrobić ręcznie, gdzie uprzątnąć podłogę,
+ile doładowań potrzebuje pełna kolejka.
+
+```yaml
+type: custom:vacuum-insights-card
+days: 30            # okno analizy (zmienisz też w karcie)
+manual_sweep: 0.5   # min/m² ręcznego odkurzania — do rekomendacji
+manual_mop: 0.8     # min/m² ręcznego mycia
+```
+
+Mapa wymaga kalibracji (panel **Zone Queue**). Powiadomienia push przy
+błędzie / utknięciu ustawisz w *Konfiguruj → Ustawienia → Usługa powiadomień
+push* (np. `notify.mobile_app_telefon`).
+
 
 
 ## Automatyzacje (harmonogramy sprzątania)

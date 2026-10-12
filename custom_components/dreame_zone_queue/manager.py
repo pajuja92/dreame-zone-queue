@@ -19,6 +19,7 @@ from .const import (
     CONF_GRACE_S,
     CONF_ROOMS,
     CONF_MODE_SELECT,
+    CONF_NOTIFY_SERVICE,
     CONF_SUCTION_SELECT,
     CONF_TASK_SENSOR,
     CONF_VACUUM_ENTITY,
@@ -27,8 +28,13 @@ from .const import (
     DEFAULT_DELAY_BETWEEN_S,
     DEFAULT_FINISHED_STATES,
     DEFAULT_GRACE_S,
+    ERROR_ESCALATE_S,
+    FEEDBACK_BACKUPS,
+    FEEDBACK_KEYFRAME_EVERY,
     FEEDBACK_LOG,
+    FEEDBACK_MAX_BYTES,
     HISTORY_MAX_RUNS,
+    INCIDENTS_MAX,
     MIN_ZONE_MM,
     FEEDBACK_LOGGER,
     SIGNAL_QUEUE_UPDATED,
@@ -40,6 +46,8 @@ from .const import (
     STATUS_PENDING,
     STATUS_SKIPPED,
     STORAGE_KEY,
+    STUCK_MOVE_MM,
+    STUCK_WINDOW_S,
     STORAGE_VERSION,
     SUCTION_TO_INT,
     UNREACHABLE_AREA_RATIO,
@@ -47,6 +55,7 @@ from .const import (
     WATCHDOG_S,
     WATER_TO_INT,
 )
+from .insights import is_stuck
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -71,6 +80,9 @@ class QueueManager:
         self.map_calib: dict | None = None
         # sesje kolejki: kazdy start->koniec/clear/stop jako jeden raport
         self.sessions: list[dict] = []
+        # incydenty z pozycja robota (bledy, utkniecia, anulowania) — mapa
+        # problemow w karcie diagnostyki
+        self.incidents: list[dict] = []
         self._unsub_state: Callable | None = None
         self._unsub_timer: Callable | None = None
         self._unsub_task_sensor: Callable | None = None
@@ -90,6 +102,9 @@ class QueueManager:
         self._fb_logger = logging.getLogger(FEEDBACK_LOGGER)
         self._fb_handler: logging.Handler | None = None
         self._fb_mirror: logging.Handler | None = None
+        # poprzedni zrzut atrybutow w DZQ_DIAG (log pisze tylko zmiany)
+        self._fb_prev_attrs: dict | None = None
+        self._fb_diag_n: int = 0
 
     # ------------------------------------------------------------------
     # options helpers
@@ -151,6 +166,7 @@ class QueueManager:
         self.history = data.get("history", {})
         self.map_calib = data.get("map_calib")
         self.sessions = data.get("sessions", [])
+        self.incidents = data.get("incidents", [])
         self.feedback = bool(data.get("feedback", False))
         if self.feedback:
             # RotatingFileHandler otwiera plik przy tworzeniu — poza petla
@@ -212,6 +228,7 @@ class QueueManager:
                 "history": self.history,
                 "map_calib": self.map_calib,
                 "sessions": self.sessions,
+                "incidents": self.incidents,
                 "feedback": self.feedback,
             }
         )
@@ -226,11 +243,12 @@ class QueueManager:
             return
         from logging.handlers import RotatingFileHandler
         path = self.hass.config.path(FEEDBACK_LOG)
-        h = RotatingFileHandler(path, maxBytes=2_000_000, backupCount=2,
-                                encoding="utf-8")
+        h = RotatingFileHandler(path, maxBytes=FEEDBACK_MAX_BYTES,
+                                backupCount=FEEDBACK_BACKUPS, encoding="utf-8")
         h.setFormatter(logging.Formatter("%(asctime)s %(message)s"))
         self._fb_logger.addHandler(h)
         self._fb_handler = h
+        self._fb_prev_attrs = None  # nowy plik zaczyna sie od pelnego zrzutu
 
         mgr = self
 
@@ -283,7 +301,7 @@ class QueueManager:
             self._fb_detach()
             if os.path.exists(base):
                 os.replace(base, dest)
-            for i in (1, 2):  # backupCount=2 w _fb_attach
+            for i in range(1, FEEDBACK_BACKUPS + 1):
                 if os.path.exists(f"{base}.{i}"):
                     os.replace(f"{base}.{i}", f"{dest}.{i}")
             if self.feedback:
@@ -300,6 +318,21 @@ class QueueManager:
                 "cleaning_sequence")
         return json.dumps({k: v for k, v in attrs.items() if k not in skip},
                           default=str, ensure_ascii=False)
+
+    def _attrs_delta(self, attrs: dict) -> str:
+        """Atrybuty do DZQ_DIAG: pelny zrzut (attrs=) na poczatku pliku i co
+        FEEDBACK_KEYFRAME_EVERY wpisow, pomiedzy tylko zmienione pola
+        (attrs_diff=). Panel Zone Queue sklada z nich pelny stan."""
+        cur = json.loads(self._attrs_json(attrs))
+        prev, self._fb_prev_attrs = self._fb_prev_attrs, cur
+        self._fb_diag_n += 1
+        if prev is None or self._fb_diag_n % FEEDBACK_KEYFRAME_EVERY == 0:
+            return "attrs=" + json.dumps(cur, ensure_ascii=False)
+        delta = {k: v for k, v in cur.items() if prev.get(k) != v}
+        gone = [k for k in prev if k not in cur]
+        if gone:
+            delta["_removed"] = gone
+        return "attrs_diff=" + json.dumps(delta, ensure_ascii=False)
 
     async def async_set_feedback(self, enabled: bool) -> None:
         enabled = bool(enabled)
@@ -642,7 +675,7 @@ class QueueManager:
             item["status"] = STATUS_PENDING
             for key in ("interrupted", "reason", "started_at", "seen_running",
                         "interrupted_since", "stall_warned", "redispatched",
-                        "dock_returns", "events"):
+                        "dock_returns", "events", *self._RUN_SCRATCH):
                 item.pop(key, None)
         self._notify()
         try:
@@ -972,8 +1005,9 @@ class QueueManager:
         # and must survive the retry dispatch itself)
         for key in ("interrupted", "was_interrupted", "interrupted_since",
                     "reason", "seen_running", "stall_warned", "dock_returns",
-                    "events"):
+                    "events", *self._RUN_SCRATCH):
             nxt.pop(key, None)
+        nxt["bat_start"] = self._battery()
         self._dispatched_at = time.monotonic()
         self._wait_wash = None
         self._notify()
@@ -1148,10 +1182,92 @@ class QueueManager:
                 and not b(a.get("returning")))
 
     # ------------------------------------------------------------------
+    # diagnostyka: bateria, pozycja, incydenty
+    # ------------------------------------------------------------------
+    # pola jednego przebiegu pokoju — czyszczone przy kazdym (re)starcie
+    _RUN_SCRATCH = ("bat_start", "bat_used", "track", "stuck_pos",
+                    "err_escalated")
+
+    def _battery(self) -> float | None:
+        st = self.hass.states.get(self.vacuum_entity)
+        try:
+            return float(st.attributes.get("battery"))
+        except (AttributeError, TypeError, ValueError):
+            return None
+
+    def _track_battery(self, item: dict, old_a, new_a) -> None:
+        """Zuzycie baterii przez pokoj = suma spadkow poza ladowaniem, wiec
+        ladowanie w srodku pokoju nie zaniza wyniku."""
+        try:
+            drop = float(old_a.get("battery")) - float(new_a.get("battery"))
+        except (TypeError, ValueError):
+            return
+        if drop > 0 and not self._to_bool(new_a.get("charging")):
+            item["bat_used"] = item.get("bat_used", 0) + drop
+
+    def _position(self) -> list | None:
+        """Pozycja robota [x, y] w mm (uklad stref) z kamery mapy dreame."""
+        base = self.vacuum_entity.split(".", 1)[-1]
+        st = self.hass.states.get(f"camera.{base}_map")
+        try:
+            pos = st.attributes.get("vacuum_position")
+            return [round(float(pos["x"])), round(float(pos["y"]))]
+        except (AttributeError, KeyError, TypeError, ValueError):
+            return None
+
+    @staticmethod
+    def _run_mode(item: dict) -> str:
+        if item.get("water") == "off":
+            return "sweeping"
+        return "mopping" if item.get("suction") == "off" else "sweeping_and_mopping"
+
+    def _record_incident(self, item: dict | None, kind: str, reason: str) -> None:
+        """kind: error | stuck | cancel — z pozycja robota (mapa problemow)."""
+        inc = {
+            "ts": round(time.time()),
+            "kind": kind,
+            "reason": reason,
+            "room": item.get("room") if item else None,
+            "mode": self._run_mode(item) if item else None,
+            "suction": item.get("suction") if item else None,
+            "pos": self._position(),
+        }
+        self.incidents.append(inc)
+        del self.incidents[:-INCIDENTS_MAX]
+        _LOGGER.warning("DZQ_DECISION | INCIDENT | kind=%s room=%s reason=%s "
+                        "pos=%s", kind, inc["room"], reason, inc["pos"])
+
+    def _check_stuck(self, item: dict) -> None:
+        """Watchdog co ~60 s: robot sprzata, a od STUCK_WINDOW_S stoi w
+        promieniu STUCK_MOVE_MM -> incydent + push (raz na miejsce)."""
+        pos = self._position()
+        if pos is None:
+            return
+        now = round(time.time())
+        track = item.setdefault("track", [])
+        if track and now - track[-1][0] > 150:
+            track.clear()  # przerwa (dok, mycie) — nie porownuj z pozycja sprzed niej
+        track.append([now, *pos])
+        del track[:-10]
+        if not is_stuck(track, STUCK_WINDOW_S, STUCK_MOVE_MM):
+            return
+        last = item.get("stuck_pos")
+        if last and abs(last[0] - pos[0]) + abs(last[1] - pos[1]) < 1000:
+            return
+        item["stuck_pos"] = pos
+        mins = STUCK_WINDOW_S // 60
+        self._record_incident(item, "stuck", f"brak ruchu {mins} min")
+        self._user_notify(
+            f"Robot chyba utknął w pokoju „{item['room']}” — od {mins} min "
+            "nie zmienia pozycji.", push=True)
+        self._notify()
+
+    # ------------------------------------------------------------------
     # shared decision helpers
     # ------------------------------------------------------------------
-    def _user_notify(self, message: str) -> None:
-        """Persistent notification in HA (best effort)."""
+    def _user_notify(self, message: str, push: bool = False) -> None:
+        """Persistent notification w HA; push=True dodatkowo przez usluge
+        notify z opcji (telefon) — tylko gdy robot potrzebuje pomocy."""
         try:
             from homeassistant.components.persistent_notification import (
                 async_create,
@@ -1160,6 +1276,11 @@ class QueueManager:
                          notification_id="dreame_zone_queue")
         except Exception as err:  # noqa: BLE001
             _LOGGER.debug("persistent_notification failed: %s", err)
+        svc = (self._opts.get(CONF_NOTIFY_SERVICE) or "").strip()
+        if push and svc:
+            self.hass.async_create_task(self.hass.services.async_call(
+                "notify", svc.removeprefix("notify."),
+                {"title": "Robot sprzątający", "message": message}))
 
     @staticmethod
     def _interrupt_reason(attrs: dict) -> str:
@@ -1209,9 +1330,12 @@ class QueueManager:
         item["reason"] = reason
         _LOGGER.warning("DZQ_DECISION | INTERRUPTED | room=%s reason=%s",
                         item["room"], reason)
+        if reason.startswith("błąd"):
+            self._record_incident(item, "error", reason)
         if notify_user:
             self._user_notify(
-                f"Pokój „{item['room']}”: {reason}. Kolejka czeka."
+                f"Pokój „{item['room']}”: {reason}. Kolejka czeka.",
+                push=reason.startswith("błąd"),
             )
         self._notify()
 
@@ -1268,7 +1392,7 @@ class QueueManager:
         started = item.get("started_at")
         if not started:
             return
-        pct = None
+        pct = cleaned = None
         st = self.hass.states.get(self.vacuum_entity)
         try:
             x1, y1, x2, y2 = item["zone"]
@@ -1278,8 +1402,6 @@ class QueueManager:
                 pct = min(100, round(100 * cleaned / zone_m2))
         except (TypeError, ValueError, KeyError, AttributeError):
             pass
-        suction_off = item.get("suction") == "off"
-        water_off = item.get("water") == "off"
         runs = self.history.setdefault(item["room"], [])
         entry = {
             "ts": round(started),
@@ -1288,12 +1410,16 @@ class QueueManager:
             "suction": item.get("suction"),
             "water": item.get("water"),
             "repeats": item.get("repeats", 1),
-            "mode": ("sweeping" if water_off
-                     else "mopping" if suction_off
-                     else "sweeping_and_mopping"),
+            "mode": self._run_mode(item),
             "outcome": outcome,
             "returns": item.get("dock_returns", 0),
             "events": self._events_summary(item),
+            # diagnostyka (od 2.0.0-beta.23): m² wg robota i zuzyta bateria
+            "area": cleaned,
+            "bat_start": item.get("bat_start"),
+            "bat_end": self._battery(),
+            "bat_used": (round(item.get("bat_used", 0))
+                         if item.get("bat_start") is not None else None),
         }
         runs.append(entry)
         del runs[:-HISTORY_MAX_RUNS]
@@ -1328,8 +1454,6 @@ class QueueManager:
         if item is None or not item.get("started_at"):
             return None
         ratio = self._area_ratio(item)
-        suction_off = item.get("suction") == "off"
-        water_off = item.get("water") == "off"
         return {
             "room": item["room"],
             "ts": round(item["started_at"]),
@@ -1338,9 +1462,7 @@ class QueueManager:
             "suction": item.get("suction"),
             "water": item.get("water"),
             "repeats": item.get("repeats", 1),
-            "mode": ("sweeping" if water_off
-                     else "mopping" if suction_off
-                     else "sweeping_and_mopping"),
+            "mode": self._run_mode(item),
             "outcome": "active",
             "returns": item.get("dock_returns", 0),
             "events": self._events_summary(item),
@@ -1383,6 +1505,8 @@ class QueueManager:
             item["dock_returns"] = item.get("dock_returns", 0) + 1
         item.setdefault("events", []).append(
             {"reason": new_reason, "since": time.time()})
+        if new_reason.startswith("błąd"):
+            self._record_incident(item, "error", new_reason)
         _LOGGER.warning("DZQ_DECISION | REASON_CHANGE | room=%s %s → %s",
                         item["room"], old_reason, new_reason)
         self._notify()
@@ -1454,10 +1578,11 @@ class QueueManager:
         self.paused_reason = reason
         self._wait_wash = None
         self._record_run(item, "cancelled")
+        self._record_incident(item, "cancel", reason)
         item["status"] = STATUS_PENDING
         for key in ("interrupted", "reason", "started_at", "seen_running",
                     "interrupted_since", "stall_warned", "redispatched",
-                    "dock_returns", "events"):
+                    "dock_returns", "events", *self._RUN_SCRATCH):
             item.pop(key, None)
         _LOGGER.warning("DZQ_DECISION | CANCELLED | room=%s reason=%s",
                         item["room"], reason)
@@ -1550,6 +1675,7 @@ class QueueManager:
 
         if self._task_running(st):
             item["seen_running"] = True
+            self._check_stuck(item)
             if item.get("interrupted"):
                 item["interrupted"] = False
                 for key in ("reason", "interrupted_since", "stall_warned"):
@@ -1564,6 +1690,15 @@ class QueueManager:
             if not item.get("interrupted"):
                 self._mark_interrupted(item, self._interrupt_reason(a),
                                        notify_user=True)
+            waited = time.time() - item.get("interrupted_since", time.time())
+            if waited > ERROR_ESCALATE_S and not item.get("err_escalated"):
+                # pierwsze powiadomienie latwo przeoczyc (log 23.09: robot
+                # stal z bledem Restricted 72 h)
+                item["err_escalated"] = True
+                self._user_notify(
+                    f"Robot nadal stoi z błędem ({item.get('reason')}) w pokoju "
+                    f"„{item['room']}” — od {int(waited // 60)} min.", push=True)
+                self._notify()
             return
 
         if self._task_interrupted(st):
@@ -1593,7 +1728,8 @@ class QueueManager:
                         f"Robot stoi wstrzymany na pokoju „{item['room']}” "
                         f"od {int(waited // 60)} min. Wznów go w ciągu ok. "
                         "5 min — inaczej firmware porzuci zadanie i pokój "
-                        "zacznie się od nowa."
+                        "zacznie się od nowa.",
+                        push=True,
                     )
                     self._notify()
             return
@@ -1615,7 +1751,7 @@ class QueueManager:
                 for key in ("restored", "interrupted", "reason", "started_at",
                             "seen_running", "interrupted_since",
                             "stall_warned", "redispatched", "dock_returns",
-                            "events"):
+                            "events", *self._RUN_SCRATCH):
                     item.pop(key, None)
                 _LOGGER.warning("DZQ_DECISION | RESTORED_NO_TASK | room=%s — "
                                 "pokój wraca do oczekujących", item["room"])
@@ -1721,8 +1857,10 @@ class QueueManager:
         )
         _LOGGER.debug("%s", diag)
         if self.feedback:
-            self._fb(f"{diag} | attrs={self._attrs_json(dict(na))}")
+            self._fb(f"{diag} | {self._attrs_delta(dict(na))}")
         # ── /diagnostic dump ─────────────────────────────────────────
+        if item is not None:
+            self._track_battery(item, old.attributes, na)
 
         # UWAGA: przetwarzamy takze przy spauzowanej kolejce (running=False)
         # — pokoj konczony "w tle" musi zostac zapisany jako done, inaczej

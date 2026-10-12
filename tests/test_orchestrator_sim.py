@@ -71,7 +71,7 @@ _stub_module(
 pkg = types.ModuleType("dzq")
 pkg.__path__ = [str(CC)]
 sys.modules["dzq"] = pkg
-for mod in ("const", "manager"):
+for mod in ("const", "insights", "manager"):
     spec = importlib.util.spec_from_file_location(f"dzq.{mod}", CC / f"{mod}.py")
     m = importlib.util.module_from_spec(spec)
     sys.modules[f"dzq.{mod}"] = m
@@ -945,6 +945,108 @@ async def test_restart_with_no_robot_task_reverts_to_pending():
     await m2._async_reconcile()
     assert m2.queue[0]["status"] == "pending" and not m2.running
     assert not zone_calls(hass2)  # zero sprzatania w ciemno
+
+
+async def test_battery_used_recorded_without_charging():
+    hass, m = mk()
+    await m.async_setup()
+    await m.async_add("Salon")
+    hass.states[VAC] = st("docked", battery=80, **TASK_DONE)
+    await m.async_start()
+    send(m, st("cleaning", battery=80, **CLEANING), st("cleaning", battery=70, **CLEANING))
+    # ladowanie w srodku pokoju nie liczy sie jako zuzycie (wzrost)
+    send(m, st("cleaning", battery=70, **CLEANING),
+         st("returning", battery=90, charging=True, resume_cleaning=True, **CLEANING))
+    send(m, st("cleaning", battery=90, **CLEANING), st("cleaning", battery=85, **CLEANING))
+    send(m, st("cleaning", battery=85, **CLEANING),
+         st("returning", battery=85, cleaned_area=3, **TASK_DONE))
+    run = m.history["Salon"][-1]
+    assert run["bat_start"] == 80 and run["bat_used"] == 15, run
+    assert run["area"] == 3.0
+
+
+async def test_error_incident_with_position_and_push():
+    hass, m = mk({const.CONF_NOTIFY_SERVICE: "notify.mobile_app_tel"})
+    await m.async_setup()
+    await m.async_add("Salon")
+    hass.states[VAC] = st("docked", **TASK_DONE)
+    hass.states["camera.l10_map"] = st("idle", vacuum_position={"x": 1200, "y": -340})
+    await m.async_start()
+    send(m, st("cleaning", **CLEANING),
+         st("error", has_error=True, error="Brush", zone_cleaning=True,
+            started=True, running=False))
+    await drain()
+    inc = m.incidents[-1]
+    assert inc["kind"] == "error" and inc["pos"] == [1200, -340]
+    assert inc["room"] == "Salon" and "Brush" in inc["reason"]
+    pushes = [c for c in hass.services.calls if c[0] == "notify"]
+    assert pushes and pushes[0][1] == "mobile_app_tel"
+
+
+async def test_long_error_escalates_once():
+    hass, m = mk({const.CONF_NOTIFY_SERVICE: "mobile_app_tel"})
+    await m.async_setup()
+    await m.async_add("Salon")
+    hass.states[VAC] = st("docked", **TASK_DONE)
+    await m.async_start()
+    err = st("error", has_error=True, error="Restricted", zone_cleaning=True,
+             started=True, running=False)
+    send(m, st("cleaning", **CLEANING), err)
+    m.queue[0]["interrupted_since"] -= const.ERROR_ESCALATE_S + 5
+    await m._async_reconcile()
+    await m._async_reconcile()
+    await drain()
+    pushes = [c for c in hass.services.calls if c[0] == "notify"]
+    assert len(pushes) == 2 and "nadal stoi" in pushes[1][2]["message"]
+
+
+async def test_stuck_detected_from_position_track():
+    mgr_mod = sys.modules["dzq.manager"]
+    real = mgr_mod.time
+    now = [1_000_000.0]
+    mgr_mod.time = SimpleNamespace(time=lambda: now[0], monotonic=real.monotonic,
+                                   strftime=real.strftime)
+    try:
+        hass, m = mk({const.CONF_NOTIFY_SERVICE: "mobile_app_tel"})
+        await m.async_setup()
+        await m.async_add("Salon")
+        hass.states[VAC] = st("docked", **TASK_DONE)
+        await m.async_start()
+        hass.states[VAC] = st("cleaning", **CLEANING)
+        cam = "camera.l10_map"
+        # jedzie: bez alarmu
+        for x in (0, 800, 1600):
+            hass.states[cam] = st("idle", vacuum_position={"x": x, "y": 0})
+            await m._async_reconcile()
+            now[0] += 60
+        assert not any(i["kind"] == "stuck" for i in m.incidents)
+        # stoi 4 probki (3 min) w promieniu 10 cm -> jeden alarm
+        for dx in (0, 50, 20, 60, 30):
+            hass.states[cam] = st("idle", vacuum_position={"x": 2000 + dx, "y": 0})
+            await m._async_reconcile()
+            now[0] += 60
+        await drain()
+        stuck = [i for i in m.incidents if i["kind"] == "stuck"]
+        assert len(stuck) == 1 and stuck[0]["pos"][0] >= 2000, m.incidents
+        assert any(c[0] == "notify" for c in hass.services.calls)
+    finally:
+        mgr_mod.time = real
+
+
+async def test_feedback_diag_logs_only_changes():
+    hass, m = mk()
+    await m.async_setup()
+    m.feedback = True
+    lines = []
+    m._fb = lines.append
+    await m.async_add("Salon")
+    hass.states[VAC] = st("docked", **TASK_DONE)
+    await m.async_start()
+    send(m, st("docked", battery=50, **TASK_DONE), st("cleaning", battery=50, **CLEANING))
+    send(m, st("cleaning", battery=50, **CLEANING), st("cleaning", battery=49, **CLEANING))
+    diag = [ln for ln in lines if ln.startswith("DZQ_DIAG")]
+    assert "| attrs={" in diag[0] and '"running": true' in diag[0]
+    assert diag[1].endswith('attrs_diff={"battery": 49}'), diag[1]
 
 
 SCENARIOS = [v for k, v in sorted(globals().items()) if k.startswith("test_")]

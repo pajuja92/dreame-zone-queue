@@ -15,6 +15,8 @@
  *       GET /api/dreame_zone_queue/map_calib (przelicznik mm→px do mapki).
  */
 
+import { TIME_CSS, breakdownHtml } from "./dzq-time.js";
+
 const OUT = {
   done:      { label: "✓ posprzątany", color: "#2ecc71" },
   cancelled: { label: "✗ anulowany",   color: "#e74c3c" },
@@ -161,6 +163,9 @@ class VacuumSessionCard extends HTMLElement {
                font-size: .9em; background: rgba(52,152,219,.14);
                border: 1px solid #3498db; color: var(--primary-text-color); }
         .live a { color: #3498db; }
+        ${TIME_CSS}
+        .time { margin-top: 10px; }
+        .time b { font-size: .85em; font-weight: 600; }
         .nomap { padding: 12px; color: var(--secondary-text-color); font-size: .88em;
                border: 1px dashed var(--divider-color); border-radius: 10px;
                line-height: 1.5; }
@@ -270,6 +275,8 @@ class VacuumSessionCard extends HTMLElement {
           <table>${rows || `<tr><td class="sub">Ta kolejka nie ma jeszcze
             zakończonych pokoi.</td></tr>`}</table>
           <div class="sum">${sum}</div>
+          ${sess.breakdown ? `<div class="time"><b>Gdzie poszedł czas</b>
+            ${breakdownHtml(sess.breakdown)}</div>` : ""}
         </div>
         <div class="maps">${map}</div>
       </div>`;

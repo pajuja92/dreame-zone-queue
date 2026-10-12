@@ -1,12 +1,13 @@
 """Constants for Dreame Zone Queue."""
 
 DOMAIN = "dreame_zone_queue"
-VERSION = "2.0.0-beta.22"
+VERSION = "2.0.0-beta.23"
 
 URL_BASE = "/dreame_zone_queue_files"
 CARD_FILENAME = "vacuum-queue-card.js"
 STATS_CARD_FILENAME = "vacuum-stats-card.js"
 SESSION_CARD_FILENAME = "vacuum-session-card.js"
+INSIGHTS_CARD_FILENAME = "vacuum-insights-card.js"
 
 # --- config / options keys ---
 CONF_VACUUM_ENTITY = "vacuum_entity"
@@ -19,6 +20,7 @@ CONF_MODE_SELECT = "cleaning_mode_select_entity"
 CONF_DELAY_BETWEEN_S = "delay_between_zones"
 CONF_WAIT_WASH = "wait_wash_between_rooms"
 CONF_TASK_SENSOR = "task_status_sensor"
+CONF_NOTIFY_SERVICE = "notify_service"  # np. notify.mobile_app_telefon — push przy problemach
 
 DEFAULT_GRACE_S = 45
 DEFAULT_DELAY_BETWEEN_S = 3
@@ -39,6 +41,11 @@ CANCEL_AREA_RATIO = 0.4
 # skip the room and keep the queue going instead of pausing
 UNREACHABLE_AREA_RATIO = 0.05
 HISTORY_MAX_RUNS = 100  # per room, dla karty statystyk
+INCIDENTS_MAX = 500        # bledy / utkniecia / anulowania z pozycja robota
+# utkniecie: robot "sprzata", a przez tyle sekund nie odjechal o STUCK_MOVE_MM
+STUCK_WINDOW_S = 180
+STUCK_MOVE_MM = 300
+ERROR_ESCALATE_S = 10 * 60  # blad trwa tyle -> drugie powiadomienie (push)
 MIN_ZONE_MM = 120          # dreame rejects zones smaller than ~2 map grid cells
 
 SUCTION_LEVELS = ["off", "quiet", "standard", "strong", "turbo"]
@@ -61,6 +68,11 @@ STORAGE_KEY = f"{DOMAIN}.queue"
 # feedback / diagnostics
 FEEDBACK_LOG = "dreame_zone_queue_feedback.log"  # in the HA config dir
 FEEDBACK_LOGGER = f"{DOMAIN}.feedback"
+FEEDBACK_MAX_BYTES = 2_000_000
+FEEDBACK_BACKUPS = 5
+# DZQ_DIAG: pełny zrzut atrybutów co tyle wpisów, pomiędzy tylko zmiany
+# (pełne zrzuty ~2,7 KB/wpis = 5 MB/dobę; same zmiany — tygodnie historii)
+FEEDBACK_KEYFRAME_EVERY = 100
 SERVICE_NOTE = "note"
 
 SIGNAL_QUEUE_UPDATED = f"{DOMAIN}_queue_updated"

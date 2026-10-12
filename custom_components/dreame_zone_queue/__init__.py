@@ -22,6 +22,7 @@ from .const import (
     ATTR_SUCTION,
     ATTR_WATER,
     CARD_FILENAME,
+    INSIGHTS_CARD_FILENAME,
     STATS_CARD_FILENAME,
     SESSION_CARD_FILENAME,
     DOMAIN,
@@ -40,6 +41,7 @@ from .const import (
     VERSION,
     WATER_LEVELS,
 )
+from .insights import build_insights, session_breakdown
 from .manager import QueueManager
 from .rooms import rooms_to_yaml, validate_rooms
 
@@ -154,9 +156,49 @@ def _history_view_cls():
                 # trwajacy przebieg (outcome='active') — widoki historii
                 # pokazuja go od razu jako "w trakcie"
                 "current": manager.current_run(),
-                # sesje kolejki (raporty start->koniec) dla vacuum-session-card
-                "sessions": manager.sessions,
+                # sesje kolejki (raporty start->koniec) dla vacuum-session-card,
+                # z podzialem czasu (sprzatanie / ladowanie / mycie / bledy)
+                "sessions": [{**s, "breakdown": session_breakdown(s)}
+                             for s in manager.sessions],
             })
+
+    return _View
+
+
+def _insights_view_cls():
+    """GET /api/dreame_zone_queue/insights?days=30&manual_sweep=&manual_mop=
+    — miejsca problemow, efektywnosc pokoi, podzial czasu, rekomendacje
+    (dane dla vacuum-insights-card)."""
+    from homeassistant.components.http import HomeAssistantView
+
+    class _View(HomeAssistantView):
+        url = "/api/dreame_zone_queue/insights"
+        name = "api:dreame_zone_queue:insights"
+        requires_auth = True
+
+        async def get(self, request):
+            import time
+
+            hass = request.app["hass"]
+            manager = _get_manager(hass)
+            if manager is None:
+                return self.json({"error": "integration not loaded"},
+                                 status_code=404)
+            q = request.query
+            try:
+                days = max(1, min(365, int(q.get("days", 30))))
+                manual = {mode: float(q[key]) for mode, key in
+                          (("sweeping", "manual_sweep"), ("mopping", "manual_mop"))
+                          if q.get(key)}
+            except ValueError:
+                return self.json({"error": "bad query"}, status_code=400)
+            st = hass.states.get(manager.vacuum_entity)
+            data = build_insights(manager.sessions, manager.incidents,
+                                  dict(st.attributes) if st else {},
+                                  round(time.time()), days, manual)
+            data["calib"] = manager.map_calib
+            data["vacuum_entity"] = manager.vacuum_entity
+            return self.json(data)
 
     return _View
 
@@ -212,6 +254,7 @@ async def _register_feedback_panel(hass: HomeAssistant) -> None:
     hass.http.register_view(_archive_view_cls()())
     hass.http.register_view(_history_view_cls()())
     hass.http.register_view(_map_calib_view_cls()())
+    hass.http.register_view(_insights_view_cls()())
     try:
         from homeassistant.components import frontend
 
@@ -265,7 +308,7 @@ async def _register_frontend(hass: HomeAssistant) -> None:
         if not resources.loaded:
             await resources.async_load()
         for filename in (CARD_FILENAME, STATS_CARD_FILENAME,
-                         SESSION_CARD_FILENAME):
+                         SESSION_CARD_FILENAME, INSIGHTS_CARD_FILENAME):
             url = f"{URL_BASE}/{filename}?v={VERSION}"
             found = False
             for item in resources.async_items():

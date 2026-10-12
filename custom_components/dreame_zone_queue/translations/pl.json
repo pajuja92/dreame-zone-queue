@@ -78,7 +78,11 @@
           "water_select_entity": "Encja select wilgotności mopa",
           "cleaning_mode_select_entity": "Encja select trybu sprzątania (domyślnie: wyprowadzana z odkurzacza)",
           "wait_wash_between_rooms": "Czekaj na mycie mopa między pokojami",
-          "task_status_sensor": "Sensor task_status dreame (domyślnie: wyprowadzany z odkurzacza)"
+          "task_status_sensor": "Sensor task_status dreame (domyślnie: wyprowadzany z odkurzacza)",
+          "notify_service": "Usługa powiadomień push (opcjonalnie)"
+        },
+        "data_description": {
+          "notify_service": "np. notify.mobile_app_telefon — alarm na telefon, gdy robot ma błąd, utknął albo stoi wstrzymany (powtórka po 10 min błędu)."
         }
       },
       "bulk_edit": {

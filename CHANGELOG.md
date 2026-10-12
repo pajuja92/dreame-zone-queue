@@ -4,6 +4,39 @@ Wszystkie istotne zmiany w projekcie. Format oparty o
 [Keep a Changelog](https://keepachangelog.com/pl/1.1.0/),
 wersjonowanie zgodne z [SemVer](https://semver.org/lang/pl/).
 
+## [2.0.0-beta.23] - 2026-10-12
+
+### Dodane — diagnostyka robota
+- **Karta `custom:vacuum-insights-card`**: mapa miejsc, w których robot
+  najczęściej ma problemy (rodzaj i liczba, wskazówka co sprawdzić),
+  rekomendacje (pokoje szybciej zrobione ręcznie z wyliczonym czasem i
+  baterią, pokoje z częstymi problemami, bilans baterii pełnej kolejki,
+  Turbo, serwis szczotek/czujników), podział czasu kolejek i tabela
+  efektywności pokoi (m²/min, % baterii, odsetek nieudanych przebiegów).
+  Dane: `GET /api/dreame_zone_queue/insights`.
+- **Incydenty z pozycją robota**: każdy błąd, utknięcie i ręczne zatrzymanie
+  zapisuje pozycję z kamery mapy (`vacuum_position`) — do 500 ostatnich.
+- **Wykrywanie utknięcia**: robot „sprząta", a od 3 min nie wyszedł z
+  promienia 30 cm → incydent i powiadomienie (raz na miejsce).
+- **Powiadomienia push** (opcja *Usługa powiadomień push*): błąd, utknięcie,
+  wstrzymanie przed porzuceniem zadania; przy błędzie trwającym 10 min drugie
+  przypomnienie (robot stał kiedyś z błędem 72 h niezauważony).
+- **Bateria w każdym przebiegu**: `bat_start`, `bat_end`, `bat_used` (suma
+  spadków poza ładowaniem) i `area` (m² wg robota) w historii pokoi.
+- **Gdzie poszedł czas** w karcie historii kolejek: pasek sprzątanie /
+  ładowanie / mycie mopa / dok / błędy / pauzy (postój kolejki osobno).
+
+### Zmienione
+- Dziennik feedbacku zapisuje pełny zrzut atrybutów co 100 wpisów, a
+  pomiędzy tylko zmiany (`attrs_diff=`) — ten sam rozmiar mieści tygodnie
+  zamiast jednej doby; 5 plików rotacji zamiast 2. Panel Zone Queue składa
+  pełny stan z wpisów zmian (widoki „pełny" i „diff" działają jak dotąd).
+
+### Testy
+- `tests/test_insights.py` (miejsca problemów, podział czasu, efektywność,
+  rekomendacje) + 5 scenariuszy symulacji (bateria, incydent z pozycją i
+  push, eskalacja błędu, utknięcie, dziennik zmian) — 48 łącznie.
+
 ## [2.0.0-beta.22] - 2026-08-11
 
 ### Naprawione (log 11.08 — „ładowanie nie zostało zanotowane")
