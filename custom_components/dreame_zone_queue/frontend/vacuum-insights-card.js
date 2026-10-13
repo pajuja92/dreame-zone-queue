@@ -1,7 +1,8 @@
 /* Vacuum Insights Card — diagnostyka robota (Dreame Zone Queue):
  *  · mapa miejsc, w których robot najczęściej ma problemy (błędy, utknięcia,
  *    ręczne zatrzymania) — z pozycji robota zapisanej przy każdym incydencie,
- *  · heatmapa zawieszeń (utknięcia + błędy, bez ręcznych zatrzymań),
+ *  · heatmapa zawieszeń z filtrem: gdzie utyka (utknięcia + błędy) / gdzie
+ *    zbacza z toru (objazdy przeszkód z toru jazdy),
  *  · gdzie poszedł czas kolejek (sprzątanie / ładowanie / mycie / błędy),
  *  · efektywność pokoi (m²/min, % baterii, odsetek nieudanych przebiegów),
  *  · rekomendacje: co robić ręcznie, gdzie posprzątać podłogę, Turbo, bateria.
@@ -24,6 +25,18 @@ const KIND = {
   cancel: { label: "zatrzymanie", color: "#95a5a6" },
 };
 const HEAT = ["#2c7bb6", "#00ccbc", "#90eb9d", "#ffff8c", "#f9d057", "#d7191c"];
+// filtry heatmapy: pole z /insights, czerwony od min_red zdarzeń w jednym miejscu
+const HEAT_KIND = {
+  stuck: { label: "Utyka", field: "stuck_points", min_red: 5,
+           red: "czerwony = 5+ razy w tym samym miejscu",
+           empty: "Brak zawieszeń z zapisaną pozycją w tym okresie — każde utknięcie i błąd pojawi się tu jako plamka.",
+           about: "Utknięcia (3 min bez ruchu) i błędy robota. Im więcej razy w tym samym miejscu, tym czerwieniej." },
+  detour: { label: "Zbacza z toru", field: "detour_points", min_red: 8,
+            red: "najczęściej objeżdżane",
+            empty: "Brak zapisanych objazdów — tor jest zbierany od wersji 2.0.0-beta.25, pojawią się po kolejnym sprzątaniu.",
+            about: "Miejsca, w których robot zjeżdża z pasa zygzaka i wraca na niego — omija przeszkodę (krzesło, zabawka, kabel). Stałe meble też tu wyjdą; nowe plamki to rzeczy na podłodze." },
+};
+const HEAT_CELL = 4;  // px obrazu mapy na komórkę siatki heatmapy
 const REC_ICON = {
   manual: "🧹", problem_room: "⚠️", hotspot: "📍", suction: "🌀",
   battery: "🔋", time: "⏱️", consumables: "🔧",
@@ -106,6 +119,12 @@ class VacuumInsightsCard extends HTMLElement {
         .map svg, .map canvas { position: absolute; inset: 0; width: 100%; height: 100%; }
         .hleg { display: flex; align-items: center; gap: 6px; margin-top: 6px; font-size: .8em;
                 color: var(--secondary-text-color); }
+        .seg { display: inline-flex; border: 1px solid var(--divider-color); border-radius: 8px;
+               overflow: hidden; margin-bottom: 8px; }
+        .seg button { font: inherit; font-size: .85em; padding: 5px 12px; border: 0; cursor: pointer;
+                      background: none; color: var(--secondary-text-color); }
+        .seg button.on { background: var(--primary-color); color: var(--text-primary-color, #fff); }
+        .seg button span { opacity: .7; margin-left: 3px; }
         .hleg i { width: 90px; height: 8px; border-radius: 4px;
                   background: linear-gradient(90deg, ${HEAT.join(", ")}); }
         .hs { list-style: none; padding: 0; margin: 8px 0 0; font-size: .88em; }
@@ -136,6 +155,9 @@ class VacuumInsightsCard extends HTMLElement {
       </ha-card>`;
     const sel = this.shadowRoot.getElementById("days");
     sel.onchange = () => { this._days = Number(sel.value); this._fetch(); };
+    for (const b of this.shadowRoot.querySelectorAll("[data-heat]")) {
+      b.onclick = () => { this._heatKind = b.dataset.heat; this._render(); };
+    }
     for (const img of this.shadowRoot.querySelectorAll(".map img")) {
       img.onload = () => { this._drawHotspots(); this._drawHeat(); };
     }
@@ -213,47 +235,69 @@ class VacuumInsightsCard extends HTMLElement {
   }
 
   _heatHtml(d) {
-    const [, cam] = this._camera(d);
-    if (!d.stuck_points || !d.stuck_points.length || !cam || !d.calib) return "";
-    return `<h3>🔥 Mapa zawieszeń</h3>
-      <div class="map heat"><img src="${cam.attributes.entity_picture || ""}"
-        draggable="false"><canvas></canvas></div>
-      <div class="hleg"><span>rzadko</span><i></i><span>często</span>
-        <span class="sub">· ${d.stuck_points.length} utknięć i błędów</span></div>`;
+    const [camEnt, cam] = this._camera(d);
+    const kind = HEAT_KIND[this._heatKind] ? this._heatKind : "stuck";
+    const k = HEAT_KIND[kind];
+    const n = (d[k.field] || []).length;
+    const tabs = Object.entries(HEAT_KIND).map(([key, v]) =>
+      `<button data-heat="${key}" class="${key === kind ? "on" : ""}">${v.label}
+        <span>${(d[v.field] || []).length}</span></button>`).join("");
+    const h = `<h3>🔥 Heatmapa — gdzie utyka i zbacza z toru</h3><div class="seg">${tabs}</div>`;
+    if (!cam || !d.calib) {
+      return `${h}<div class="nomap">${!cam ? `Brak kamery mapy <b>${this._esc(camEnt)}</b> — ustaw
+        <b>map_camera</b>.` : "Brak kalibracji mapy — zrób ją w panelu <b>Zone Queue</b>."}</div>`;
+    }
+    const leg = n
+      ? `<span>rzadko</span><i></i><span>${k.red}</span>`
+      : `<span>${k.empty}</span>`;
+    return `${h}<div class="map heat"><img src="${cam.attributes.entity_picture || ""}"
+        draggable="false"><canvas></canvas></div><div class="hleg">${leg}</div>
+      <div class="sub">${k.about}</div>`;
   }
 
-  /* heatmapa: każde zawieszenie to rozmyta plamka w kanale alfa, nakładające się
-     plamki sumują się, potem alfa → kolor z palety (niebieski → czerwony) */
+  /* heatmapa: gęstość punktów na siatce (komórka = HEAT_CELL px obrazu mapy),
+     każdy punkt dodaje plamkę o wartości 1 w środku — więc wartość ≈ ile razy
+     coś się stało w tym miejscu. Czerwony = HEAT_KIND.min_red razy albo
+     najgorsze miejsce, jeśli jest gorsze. Mała siatka, rozciągnięta CSS-em. */
   _drawHeat() {
     const r = this.shadowRoot;
     const img = r && r.querySelector(".heat img");
     const cv = r && r.querySelector(".heat canvas");
     const c = this._data && this._data.calib;
     if (!img || !cv || !c || !img.naturalWidth) return;
-    const W = (cv.width = img.naturalWidth), H = (cv.height = img.naturalHeight);
-    const ctx = cv.getContext("2d", { willReadFrequently: true });
-    const rad = W / 22;
-    for (const [mx, my] of this._data.stuck_points) {
-      const x = (mx - c.bx) / c.ax, y = (my - c.by) / c.ay;
-      const g = ctx.createRadialGradient(x, y, 0, x, y, rad);
-      g.addColorStop(0, "rgba(0,0,0,.4)");
-      g.addColorStop(1, "rgba(0,0,0,0)");
-      ctx.fillStyle = g;
-      ctx.fillRect(x - rad, y - rad, 2 * rad, 2 * rad);
+    const k = HEAT_KIND[this._heatKind] || HEAT_KIND.stuck;
+    const gw = Math.ceil(img.naturalWidth / HEAT_CELL);
+    const gh = Math.ceil(img.naturalHeight / HEAT_CELL);
+    const R = gw / 22;  // promień plamki ~ 4,5% szerokości mapy
+    const grid = new Float32Array(gw * gh);
+    for (const [mx, my] of this._data[k.field] || []) {
+      const cx = (mx - c.bx) / c.ax / HEAT_CELL, cy = (my - c.by) / c.ay / HEAT_CELL;
+      for (let y = Math.max(0, Math.ceil(cy - R)); y <= Math.min(gh - 1, cy + R); y++) {
+        for (let x = Math.max(0, Math.ceil(cx - R)); x <= Math.min(gw - 1, cx + R); x++) {
+          const d2 = ((x - cx) ** 2 + (y - cy) ** 2) / (R * R);
+          if (d2 < 1) grid[y * gw + x] += (1 - d2) ** 2;
+        }
+      }
     }
+    let max = 0;
+    for (const v of grid) if (v > max) max = v;
+    const scale = Math.max(k.min_red, max);
     const pal = document.createElement("canvas").getContext("2d");
     const lg = pal.createLinearGradient(0, 0, 256, 0);
     HEAT.forEach((col, i) => lg.addColorStop(i / (HEAT.length - 1), col));
     pal.fillStyle = lg;
     pal.fillRect(0, 0, 256, 1);
     const p = pal.getImageData(0, 0, 256, 1).data;
-    const im = ctx.getImageData(0, 0, W, H), px = im.data;
-    for (let i = 0; i < px.length; i += 4) {
-      const a = px[i + 3];
-      if (!a) continue;
-      px[i] = p[a * 4]; px[i + 1] = p[a * 4 + 1]; px[i + 2] = p[a * 4 + 2];
-      px[i + 3] = Math.min(230, a * 2);
-    }
+    cv.width = gw;
+    cv.height = gh;
+    const ctx = cv.getContext("2d");
+    const im = ctx.createImageData(gw, gh), px = im.data;
+    grid.forEach((v, i) => {
+      if (v < 0.02) return;
+      const t = Math.min(1, v / scale), j = Math.round(t * 255) * 4;
+      px[i * 4] = p[j]; px[i * 4 + 1] = p[j + 1]; px[i * 4 + 2] = p[j + 2];
+      px[i * 4 + 3] = Math.min(220, 255 * (0.35 + t) * Math.min(1, v * 3));
+    });
     ctx.putImageData(im, 0, 0);
   }
 

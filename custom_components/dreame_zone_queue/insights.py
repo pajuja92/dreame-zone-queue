@@ -47,6 +47,87 @@ def is_stuck(track: list, window_s: int, move_mm: int) -> bool:
     return math.hypot(max(xs) - min(xs), max(ys) - min(ys)) < move_mm
 
 
+# ponytail: heurystyka na probkach pozycji co ~3 s (kamera mapy dreame), bez
+# planu trasy robota — progi do dostrojenia na prawdziwych torach z feedback logu
+DETOUR_TOL_DEG = 20     # odchylenie od siatki pasow, ponizej = jazda po torze
+DETOUR_MIN_SEG_MM = 150  # krotsze ruchy (postoj, obrot w miejscu) pomijamy
+DETOUR_GAP_MM = 1500     # dluzszy skok = przerwa w zapisie toru
+DETOUR_MAX_MM = 2500     # dluzszy objazd to juz przejazd (np. powrot z doku)
+
+
+def find_detours(path: list, zone) -> list:
+    """Miejsca, w ktorych robot zjechal z toru, zeby ominac przeszkode.
+
+    path: [[x, y], ...] pozycje robota w trakcie sprzatania pokoju (mm).
+    W strefie robot jezdzi zygzakiem: dlugie pasy wzdluz jednej osi i krotkie
+    przesuniecia na kolejny pas. Objazd = odcinki pod skosem do siatki pasow,
+    po ktorych robot wraca na pas w TYM SAMYM kierunku. Skos zakonczony
+    zawroceniem to zwykly koniec pasa (probka wypadla w trakcie nawrotu)."""
+    xa, xb = sorted((zone[0], zone[2]))
+    ya, yb = sorted((zone[1], zone[3]))
+    segs = []  # (kat, dlugosc, a, b); None = przerwa w torze
+    for a, b in zip(path, path[1:]):
+        n = math.dist(a, b)
+        if n < DETOUR_MIN_SEG_MM:
+            continue
+        mx, my = (a[0] + b[0]) / 2, (a[1] + b[1]) / 2
+        if n > DETOUR_GAP_MM or not (xa <= mx <= xb and ya <= my <= yb):
+            segs.append(None)
+            continue
+        segs.append((math.degrees(math.atan2(b[1] - a[1], b[0] - a[0])), n, a, b))
+    real = [s for s in segs if s]
+    if len(real) < 6:
+        return []
+    # orientacja siatki: najczestszy kat mod 90 (wazony dlugoscia), kosze 5°
+    bins: Counter = Counter()
+    for ang, n, *_ in real:
+        bins[round((ang % 90) / 5) % 18] += n
+    grid = bins.most_common(1)[0][0] * 5
+
+    def off(ang):  # 0..45° od najblizszej osi siatki
+        d = (ang - grid) % 90
+        return min(d, 90 - d)
+
+    # os pasow = ta z dwoch osi siatki, wzdluz ktorej robot przejechal wiecej
+    axes: Counter = Counter()
+    for ang, n, *_ in real:
+        if off(ang) < DETOUR_TOL_DEG:
+            axes[round(((ang - grid) % 180) / 90) % 2] += n
+    lane = grid + 90 * axes.most_common(1)[0][0]
+
+    def lane_dir(ang):  # 1 / -1 = jazda pasem w jedna / druga strone
+        d = (ang - lane) % 360
+        if min(d, 360 - d) < DETOUR_TOL_DEG:
+            return 1
+        return -1 if abs(d - 180) < DETOUR_TOL_DEG else 0
+
+    out: list = []
+    last = 0      # kierunek ostatniego pasa
+    run: list = []  # biezacy ciag odcinkow pod skosem
+    for sg in segs:
+        if sg is None:
+            last, run = 0, []
+            continue
+        ang, n, a, b = sg
+        if off(ang) >= DETOUR_TOL_DEG:
+            run.append(sg)
+            continue
+        d = lane_dir(ang)
+        if not d:
+            continue  # przesuniecie na kolejny pas
+        if run and d == last and sum(r[1] for r in run) <= DETOUR_MAX_MM:
+            pts = [p for r in run for p in (r[2], r[3])]
+            c = [round(statistics.fmean(p[0] for p in pts)),
+                 round(statistics.fmean(p[1] for p in pts))]
+            if out and math.dist(out[-1], c) <= 1200:
+                # zjazd z pasa i powrot na niego = jeden objazd
+                out[-1] = [round((out[-1][0] + c[0]) / 2), round((out[-1][1] + c[1]) / 2)]
+            else:
+                out.append(c)
+        last, run = d, []
+    return out
+
+
 def cluster_incidents(incidents: list, radius_mm: int = 600) -> list:
     """Incydenty z pozycja -> miejsca (zachlannie, srodek = srednia).
     Najczestsze pierwsze."""
@@ -341,6 +422,9 @@ def build_insights(sessions: list, incidents: list, vacuum_attrs: dict,
         # reczne zatrzymania pomijamy — to decyzja usera, nie problem robota
         "stuck_points": [i["pos"][:2] for i in incidents
                          if i.get("pos") and i["kind"] in ("stuck", "error")],
+        # objazdy przeszkod zapisane przy przebiegach (od 2.0.0-beta.25)
+        "detour_points": [p for s in recent for r in s["runs"]
+                          if r["ts"] >= since for p in r.get("detours") or []],
         "incidents": len(incidents),
         "recommendations": recommendations(eff, total or None,
                                            vacuum_attrs, manual, typical),

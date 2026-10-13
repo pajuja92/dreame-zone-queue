@@ -4,6 +4,22 @@ Wszystkie istotne zmiany w projekcie. Format oparty o
 [Keep a Changelog](https://keepachangelog.com/pl/1.1.0/),
 wersjonowanie zgodne z [SemVer](https://semver.org/lang/pl/).
 
+## [2.0.0-beta.25] - 2026-10-13
+
+### Dodane
+- **Heatmapa z filtrem „Utyka / Zbacza z toru"** w karcie diagnostyki.
+  „Utyka" — utknięcia i błędy; im więcej razy w tym samym miejscu, tym
+  czerwieniej (czerwony = 5+). „Zbacza z toru" — miejsca, gdzie robot zjeżdża
+  z pasa zygzaka i wraca na niego, czyli objeżdża przeszkodę.
+- **Zapis toru jazdy**: w trakcie sprzątania pokoju integracja zbiera pozycję
+  robota z kamery mapy (co ~3 s, tylko w pamięci); po pokoju zapisuje w
+  historii do 30 punktów objazdów (`detours`). Przy włączonym trybie
+  feedback surowy tor trafia do logu (`PATH`) — do strojenia progów.
+
+### Zmienione
+- Heatmapa jest widoczna zawsze — bez danych pokazuje pustą mapę z
+  informacją, zamiast chować sekcję.
+
 ## [2.0.0-beta.24] - 2026-10-13
 
 ### Dodane

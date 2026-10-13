@@ -179,7 +179,8 @@ entity: sensor.vacuum_zone_queue
 
 Mapa miejsc, w których robot najczęściej ma problemy (błędy, utknięcia,
 ręczne zatrzymania — z pozycją robota zapisaną przy każdym incydencie),
-heatmapa zawieszeń (utknięcia i błędy nałożone na mapę mieszkania),
+heatmapa z filtrem: gdzie robot utyka (utknięcia i błędy) i gdzie zbacza
+z toru, objeżdżając przeszkody (z toru jazdy zbieranego w trakcie sprzątania),
 podział czasu kolejek (sprzątanie / ładowanie / mycie mopa / błędy),
 efektywność pokoi (m²/min, % baterii, odsetek nieudanych przebiegów) oraz
 rekomendacje: które pokoje szybciej zrobić ręcznie, gdzie uprzątnąć podłogę,

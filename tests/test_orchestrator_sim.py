@@ -965,6 +965,34 @@ async def test_battery_used_recorded_without_charging():
     assert run["area"] == 3.0
 
 
+async def test_path_detours_recorded_with_run():
+    hass, m = mk()
+    await m.async_setup()
+    await m.async_add("Salon")
+    hass.states[VAC] = st("docked", **TASK_DONE)
+    await m.async_start()
+    hass.states[VAC] = st("cleaning", **CLEANING)
+    cam = "camera.l10_map"
+    path = []
+    for k in range(6):  # zygzak po strefie Salonu, objazd na 3. pasie
+        y = 100 + 300 * k
+        xs = [0, 500, 1000, 1500, 2000][:: 1 if k % 2 == 0 else -1]
+        for x in xs:
+            path += [[800, y + 250], [1200, y + 250]] if (k, x) == (2, 1000) else [[x, y]]
+        path.append([xs[-1], y + 150])
+    for x, y in path:
+        hass.states[cam] = st("idle", vacuum_position={"x": x, "y": y})
+        m._on_map_update(None)
+    # powrot do doku nie jest torem pokoju
+    hass.states[VAC] = st("returning", **TASK_DONE)
+    hass.states[cam] = st("idle", vacuum_position={"x": -3000, "y": 900})
+    m._on_map_update(None)
+    send(m, st("cleaning", **CLEANING), st("returning", **TASK_DONE))
+    d = m.history["Salon"][-1]["detours"]
+    assert len(d) == 1 and abs(d[0][0] - 1000) < 300, d
+    assert m._path == []
+
+
 async def test_error_incident_with_position_and_push():
     hass, m = mk({const.CONF_NOTIFY_SERVICE: "notify.mobile_app_tel"})
     await m.async_setup()

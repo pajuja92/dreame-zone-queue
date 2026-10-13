@@ -24,6 +24,37 @@ def test_is_stuck():
     assert not ins.is_stuck(moving, 180, 300)
 
 
+def zigzag(lanes=6, obstacle_lane=None):
+    """Tor zygzakiem po strefie 0..3000 x 0..2000, probki co 750 mm."""
+    path = [[-2000, -500], [-1000, -300]]  # dojazd spoza strefy
+    for k in range(lanes):
+        y = 100 + 300 * k
+        xs = [0, 750, 1500, 2250, 3000] if k % 2 == 0 else [3000, 2250, 1500, 750, 0]
+        for x in xs:
+            if k == obstacle_lane and x == 1500:
+                path += [[1200, y + 280], [1800, y + 280]]  # objazd krzesla
+            else:
+                path.append([x, y])
+        # nawrot: probka wypada w polowie skretu na kolejny pas (skos)
+        path.append([xs[-1] + (60 if k % 2 == 0 else -60), y + 150])
+    return path
+
+
+def test_find_detours():
+    zone = (0, 0, 3000, 2000)
+    assert ins.find_detours(zigzag(), zone) == []  # konce pasow to nie objazdy
+    d = ins.find_detours(zigzag(obstacle_lane=2), zone)
+    assert len(d) == 1 and abs(d[0][0] - 1500) < 400 and abs(d[0][1] - 700) < 300
+    # obrocona mapa (siatka pod katem) — dalej jeden objazd
+    rot = [[x * 0.94 - y * 0.34, x * 0.34 + y * 0.94] for x, y in zigzag(obstacle_lane=2)]
+    assert len(ins.find_detours(rot, (-1000, 0, 3000, 3000))) == 1
+    # punkty z przebiegow w oknie trafiaja do karty, stare przebiegi bez pola tez dzialaja
+    s = {"started": 0, "ended": 9000, "runs": [
+        {**run("A", "sweeping", 8000, 60), "detours": [[1, 2]]},
+        run("B", "sweeping", 8100, 60)]}
+    assert ins.build_insights([s], [], {}, now=9000, days=1)["detour_points"] == [[1, 2]]
+
+
 def test_cluster_incidents():
     incs = [
         {"ts": 1, "kind": "error", "reason": "błąd: Brush", "room": "Salon", "pos": [5000, -2000]},

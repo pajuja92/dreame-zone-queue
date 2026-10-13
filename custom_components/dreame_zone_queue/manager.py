@@ -55,7 +55,7 @@ from .const import (
     WATCHDOG_S,
     WATER_TO_INT,
 )
-from .insights import is_stuck
+from .insights import find_detours, is_stuck
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -83,6 +83,11 @@ class QueueManager:
         # incydenty z pozycja robota (bledy, utkniecia, anulowania) — mapa
         # problemow w karcie diagnostyki
         self.incidents: list[dict] = []
+        # tor biezacego pokoju [[x, y], ...] (tylko w pamieci) -> objazdy
+        # przeszkod przy zapisie przebiegu; restart w polowie pokoju = brak toru
+        self._path: list = []
+        self._path_item: int | None = None
+        self._unsub_map: Callable | None = None
         self._unsub_state: Callable | None = None
         self._unsub_timer: Callable | None = None
         self._unsub_task_sensor: Callable | None = None
@@ -198,6 +203,10 @@ class QueueManager:
             self._unsub_state = async_track_state_change_event(
                 self.hass, [self.vacuum_entity], self._on_vacuum_state
             )
+        if self.vacuum_entity:
+            self._unsub_map = async_track_state_change_event(
+                self.hass, [self._map_entity()], self._on_map_update
+            )
         if self.task_sensor_entity:
             self._unsub_task_sensor = async_track_state_change_event(
                 self.hass, [self.task_sensor_entity], self._on_task_sensor
@@ -210,7 +219,7 @@ class QueueManager:
 
     async def async_unload(self) -> None:
         for attr in ("_unsub_state", "_unsub_timer", "_unsub_task_sensor",
-                     "_unsub_bus", "_unsub_watchdog"):
+                     "_unsub_bus", "_unsub_watchdog", "_unsub_map"):
             unsub = getattr(self, attr)
             if unsub:
                 unsub()
@@ -1205,10 +1214,12 @@ class QueueManager:
         if drop > 0 and not self._to_bool(new_a.get("charging")):
             item["bat_used"] = item.get("bat_used", 0) + drop
 
+    def _map_entity(self) -> str:
+        return f"camera.{self.vacuum_entity.split('.', 1)[-1]}_map"
+
     def _position(self) -> list | None:
         """Pozycja robota [x, y] w mm (uklad stref) z kamery mapy dreame."""
-        base = self.vacuum_entity.split(".", 1)[-1]
-        st = self.hass.states.get(f"camera.{base}_map")
+        st = self.hass.states.get(self._map_entity())
         try:
             pos = st.attributes.get("vacuum_position")
             return [round(float(pos["x"])), round(float(pos["y"]))]
@@ -1220,6 +1231,23 @@ class QueueManager:
         if item.get("water") == "off":
             return "sweeping"
         return "mopping" if item.get("suction") == "off" else "sweeping_and_mopping"
+
+    @callback
+    def _on_map_update(self, event: Event) -> None:
+        """Kamera mapy odswieza sie co ~3 s — zapis toru, gdy robot sprzata
+        aktywny pokoj (bez dojazdow do doku i postojow)."""
+        item = self._active()
+        st = self.hass.states.get(self.vacuum_entity)
+        if item is None or st is None or not self._task_running(st):
+            return
+        pos = self._position()
+        if pos is None:
+            return
+        if self._path_item != item["id"]:
+            self._path, self._path_item = [], item["id"]
+        if not self._path or abs(self._path[-1][0] - pos[0]) + abs(self._path[-1][1] - pos[1]) >= 100:
+            self._path.append(pos)
+            del self._path[:-4000]
 
     def _record_incident(self, item: dict | None, kind: str, reason: str) -> None:
         """kind: error | stuck | cancel — z pozycja robota (mapa problemow)."""
@@ -1420,6 +1448,8 @@ class QueueManager:
             "bat_end": self._battery(),
             "bat_used": (round(item.get("bat_used", 0))
                          if item.get("bat_start") is not None else None),
+            # objazdy przeszkod (od 2.0.0-beta.25) — heatmapa „zbacza z toru"
+            "detours": self._take_detours(item),
         }
         runs.append(entry)
         del runs[:-HISTORY_MAX_RUNS]
@@ -1430,6 +1460,15 @@ class QueueManager:
             sess["runs"].append(
                 {"room": item["room"], "zone": list(item["zone"]), **entry})
             del sess["runs"][:-200]
+
+    def _take_detours(self, item: dict) -> list:
+        if self._path_item != item["id"]:
+            return []
+        path, self._path, self._path_item = self._path, [], None
+        # surowy tor do strojenia progow find_detours
+        if self.feedback:
+            self._fb("PATH | %s | %s" % (item["room"], path))
+        return find_detours(path, item["zone"])[:30]
 
     def _area_ratio(self, item: dict) -> float | None:
         """Sprzatnieta czesc strefy (0..1); None gdy brak danych lub strefa
