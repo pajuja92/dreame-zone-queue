@@ -1,6 +1,7 @@
 /* Vacuum Insights Card — diagnostyka robota (Dreame Zone Queue):
  *  · mapa miejsc, w których robot najczęściej ma problemy (błędy, utknięcia,
  *    ręczne zatrzymania) — z pozycji robota zapisanej przy każdym incydencie,
+ *  · heatmapa zawieszeń (utknięcia + błędy, bez ręcznych zatrzymań),
  *  · gdzie poszedł czas kolejek (sprzątanie / ładowanie / mycie / błędy),
  *  · efektywność pokoi (m²/min, % baterii, odsetek nieudanych przebiegów),
  *  · rekomendacje: co robić ręcznie, gdzie posprzątać podłogę, Turbo, bateria.
@@ -22,6 +23,7 @@ const KIND = {
   stuck: { label: "utknięcie", color: "#e67e22" },
   cancel: { label: "zatrzymanie", color: "#95a5a6" },
 };
+const HEAT = ["#2c7bb6", "#00ccbc", "#90eb9d", "#ffff8c", "#f9d057", "#d7191c"];
 const REC_ICON = {
   manual: "🧹", problem_room: "⚠️", hotspot: "📍", suction: "🌀",
   battery: "🔋", time: "⏱️", consumables: "🔧",
@@ -82,7 +84,7 @@ class VacuumInsightsCard extends HTMLElement {
     let body;
     if (this._error) body = `<div class="empty">Błąd pobierania: ${this._esc(this._error)}</div>`;
     else if (!d) body = `<div class="empty">Ładowanie…</div>`;
-    else body = this._summary(d) + this._mapHtml(d) + this._recsHtml(d)
+    else body = this._summary(d) + this._mapHtml(d) + this._heatHtml(d) + this._recsHtml(d)
       + this._timeHtml(d) + this._effHtml(d);
     const days = [7, 30, 90].map((n) =>
       `<option value="${n}" ${n === this._days ? "selected" : ""}>${n} dni</option>`).join("");
@@ -101,7 +103,11 @@ class VacuumInsightsCard extends HTMLElement {
         .chip b { color: var(--primary-text-color); font-weight: 600; }
         .map { position: relative; line-height: 0; max-width: 560px; }
         .map img { width: 100%; border-radius: 10px; display: block; }
-        .map svg { position: absolute; inset: 0; width: 100%; height: 100%; }
+        .map svg, .map canvas { position: absolute; inset: 0; width: 100%; height: 100%; }
+        .hleg { display: flex; align-items: center; gap: 6px; margin-top: 6px; font-size: .8em;
+                color: var(--secondary-text-color); }
+        .hleg i { width: 90px; height: 8px; border-radius: 4px;
+                  background: linear-gradient(90deg, ${HEAT.join(", ")}); }
         .hs { list-style: none; padding: 0; margin: 8px 0 0; font-size: .88em; }
         .hs li { padding: 6px 0; border-bottom: 1px solid var(--divider-color);
                  display: flex; gap: 8px; align-items: baseline; }
@@ -130,9 +136,11 @@ class VacuumInsightsCard extends HTMLElement {
       </ha-card>`;
     const sel = this.shadowRoot.getElementById("days");
     sel.onchange = () => { this._days = Number(sel.value); this._fetch(); };
-    const img = this.shadowRoot.querySelector(".map img");
-    if (img) img.onload = () => this._drawHotspots();
+    for (const img of this.shadowRoot.querySelectorAll(".map img")) {
+      img.onload = () => { this._drawHotspots(); this._drawHeat(); };
+    }
     this._drawHotspots();
+    this._drawHeat();
   }
 
   _summary(d) {
@@ -148,10 +156,14 @@ class VacuumInsightsCard extends HTMLElement {
     </div>`;
   }
 
-  _mapHtml(d) {
-    const camEnt = this._config.map_camera
+  _camera(d) {
+    const ent = this._config.map_camera
       || ("camera." + ((d.vacuum_entity || "").split(".")[1] || "") + "_map");
-    const cam = this._hass && this._hass.states[camEnt];
+    return [ent, this._hass && this._hass.states[ent]];
+  }
+
+  _mapHtml(d) {
+    const [camEnt, cam] = this._camera(d);
     let map;
     if (!d.hotspots.length) {
       map = `<div class="nomap">Brak zapisanych problemów z pozycją robota w tym
@@ -179,7 +191,7 @@ class VacuumInsightsCard extends HTMLElement {
   /* kółka problemów: mm -> px obrazu mapy (jak strefy w karcie historii) */
   _drawHotspots() {
     const r = this.shadowRoot;
-    const img = r && r.querySelector(".map img");
+    const img = r && r.querySelector(".map:not(.heat) img");
     const svg = r && r.querySelector(".map svg");
     const c = this._data && this._data.calib;
     if (!img || !svg || !c || !img.naturalWidth) return;
@@ -198,6 +210,51 @@ class VacuumInsightsCard extends HTMLElement {
         <text x="${x}" y="${y}" text-anchor="middle" dominant-baseline="central"
           font-size="${rad * 1.1}" font-weight="700" fill="#fff">${i + 1}</text>`;
     }).join("");
+  }
+
+  _heatHtml(d) {
+    const [, cam] = this._camera(d);
+    if (!d.stuck_points || !d.stuck_points.length || !cam || !d.calib) return "";
+    return `<h3>🔥 Mapa zawieszeń</h3>
+      <div class="map heat"><img src="${cam.attributes.entity_picture || ""}"
+        draggable="false"><canvas></canvas></div>
+      <div class="hleg"><span>rzadko</span><i></i><span>często</span>
+        <span class="sub">· ${d.stuck_points.length} utknięć i błędów</span></div>`;
+  }
+
+  /* heatmapa: każde zawieszenie to rozmyta plamka w kanale alfa, nakładające się
+     plamki sumują się, potem alfa → kolor z palety (niebieski → czerwony) */
+  _drawHeat() {
+    const r = this.shadowRoot;
+    const img = r && r.querySelector(".heat img");
+    const cv = r && r.querySelector(".heat canvas");
+    const c = this._data && this._data.calib;
+    if (!img || !cv || !c || !img.naturalWidth) return;
+    const W = (cv.width = img.naturalWidth), H = (cv.height = img.naturalHeight);
+    const ctx = cv.getContext("2d", { willReadFrequently: true });
+    const rad = W / 22;
+    for (const [mx, my] of this._data.stuck_points) {
+      const x = (mx - c.bx) / c.ax, y = (my - c.by) / c.ay;
+      const g = ctx.createRadialGradient(x, y, 0, x, y, rad);
+      g.addColorStop(0, "rgba(0,0,0,.4)");
+      g.addColorStop(1, "rgba(0,0,0,0)");
+      ctx.fillStyle = g;
+      ctx.fillRect(x - rad, y - rad, 2 * rad, 2 * rad);
+    }
+    const pal = document.createElement("canvas").getContext("2d");
+    const lg = pal.createLinearGradient(0, 0, 256, 0);
+    HEAT.forEach((col, i) => lg.addColorStop(i / (HEAT.length - 1), col));
+    pal.fillStyle = lg;
+    pal.fillRect(0, 0, 256, 1);
+    const p = pal.getImageData(0, 0, 256, 1).data;
+    const im = ctx.getImageData(0, 0, W, H), px = im.data;
+    for (let i = 0; i < px.length; i += 4) {
+      const a = px[i + 3];
+      if (!a) continue;
+      px[i] = p[a * 4]; px[i + 1] = p[a * 4 + 1]; px[i + 2] = p[a * 4 + 2];
+      px[i + 3] = Math.min(230, a * 2);
+    }
+    ctx.putImageData(im, 0, 0);
   }
 
   _recsHtml(d) {

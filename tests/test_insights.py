@@ -36,6 +36,10 @@ def test_cluster_incidents():
     assert len(hs) == 2 and hs[0]["n"] == 3 and hs[0]["room"] == "Salon"
     assert hs[0]["reasons"][0] == ["błąd: Brush", 2] and "szczotka główna" in hs[0]["hint"]
     assert hs[0]["kinds"] == {"error": 2, "stuck": 1}
+    # heatmapa: tylko utkniecia i bledy z pozycja, w oknie czasowym
+    incs.append({"ts": 6, "kind": "cancel", "reason": "x", "room": "Biuro", "pos": [1, 1]})
+    out = ins.build_insights([], incs, {}, now=4 + 86400, days=1)
+    assert out["stuck_points"] == [[0, -3000]] and out["incidents"] == 3
 
 
 def test_session_breakdown():

@@ -316,7 +316,8 @@ def build_insights(sessions: list, incidents: list, vacuum_attrs: dict,
         b = session_breakdown(s) or {}
         for k, v in b.items():
             total[k] = total.get(k, 0) + v
-    hotspots = cluster_incidents([i for i in incidents if i["ts"] >= since])
+    incidents = [i for i in incidents if i["ts"] >= since]
+    hotspots = cluster_incidents(incidents)
     area = sum(a for s in recent for r in s["runs"]
                if r["ts"] >= since and r["outcome"] == "done"
                for a in [_area(r)] if a)
@@ -336,7 +337,11 @@ def build_insights(sessions: list, incidents: list, vacuum_attrs: dict,
                             if total.get("cleaning") else None),
         "efficiency": eff,
         "hotspots": hotspots,
-        "incidents": len([i for i in incidents if i["ts"] >= since]),
+        # surowe pozycje zawieszen (utkniecie / blad) pod heatmape;
+        # reczne zatrzymania pomijamy — to decyzja usera, nie problem robota
+        "stuck_points": [i["pos"][:2] for i in incidents
+                         if i.get("pos") and i["kind"] in ("stuck", "error")],
+        "incidents": len(incidents),
         "recommendations": recommendations(eff, total or None,
                                            vacuum_attrs, manual, typical),
     }

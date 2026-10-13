@@ -4,6 +4,14 @@ Wszystkie istotne zmiany w projekcie. Format oparty o
 [Keep a Changelog](https://keepachangelog.com/pl/1.1.0/),
 wersjonowanie zgodne z [SemVer](https://semver.org/lang/pl/).
 
+## [2.0.0-beta.24] - 2026-10-13
+
+### Dodane
+- **Heatmapa zawieszeń** w karcie diagnostyki: każde utknięcie i błąd to
+  plamka na mapie mieszkania, nakładające się plamki się sumują (niebieski →
+  czerwony). Ręczne zatrzymania pominięte. Endpoint `insights` zwraca
+  `stuck_points`.
+
 ## [2.0.0-beta.23] - 2026-10-12
 
 ### Dodane — diagnostyka robota
