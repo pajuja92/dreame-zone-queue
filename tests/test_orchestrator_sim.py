@@ -965,6 +965,12 @@ async def test_battery_used_recorded_without_charging():
     assert run["area"] == 3.0
 
 
+def point(x, y):
+    """vacuum_position z dreame to obiekt Point (x, y, a), NIE dict — REST API
+    pokazuje go jako dict tylko dzieki as_dict() (bug beta.23-25: pos zawsze None)."""
+    return SimpleNamespace(x=x, y=y, a=90, as_dict=lambda: {"x": x, "y": y, "a": 90})
+
+
 async def test_path_detours_recorded_with_run():
     hass, m = mk()
     await m.async_setup()
@@ -981,7 +987,7 @@ async def test_path_detours_recorded_with_run():
             path += [[800, y + 250], [1200, y + 250]] if (k, x) == (2, 1000) else [[x, y]]
         path.append([xs[-1], y + 150])
     for x, y in path:
-        hass.states[cam] = st("idle", vacuum_position={"x": x, "y": y})
+        hass.states[cam] = st("idle", vacuum_position=point(x, y))
         m._on_map_update(None)
     # powrot do doku nie jest torem pokoju
     hass.states[VAC] = st("returning", **TASK_DONE)
@@ -998,7 +1004,7 @@ async def test_error_incident_with_position_and_push():
     await m.async_setup()
     await m.async_add("Salon")
     hass.states[VAC] = st("docked", **TASK_DONE)
-    hass.states["camera.l10_map"] = st("idle", vacuum_position={"x": 1200, "y": -340})
+    hass.states["camera.l10_map"] = st("idle", vacuum_position=point(1200, -340))
     await m.async_start()
     send(m, st("cleaning", **CLEANING),
          st("error", has_error=True, error="Brush", zone_cleaning=True,
@@ -1009,6 +1015,21 @@ async def test_error_incident_with_position_and_push():
     assert inc["room"] == "Salon" and "Brush" in inc["reason"]
     pushes = [c for c in hass.services.calls if c[0] == "notify"]
     assert pushes and pushes[0][1] == "mobile_app_tel"
+
+
+async def test_error_position_backfilled_while_robot_stands():
+    hass, m = mk()
+    await m.async_setup()
+    await m.async_add("Salon")
+    hass.states[VAC] = st("docked", **TASK_DONE)
+    await m.async_start()
+    send(m, st("cleaning", **CLEANING),
+         st("error", has_error=True, error="Brush", zone_cleaning=True,
+            started=True, running=False))
+    assert m.incidents[-1]["pos"] is None  # kamera mapy jeszcze bez pozycji
+    hass.states["camera.l10_map"] = st("idle", vacuum_position=point(700, 300))
+    await m._async_reconcile()
+    assert m.incidents[-1]["pos"] == [700, 300]
 
 
 async def test_long_error_escalates_once():

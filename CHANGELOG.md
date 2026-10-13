@@ -4,6 +4,16 @@ Wszystkie istotne zmiany w projekcie. Format oparty o
 [Keep a Changelog](https://keepachangelog.com/pl/1.1.0/),
 wersjonowanie zgodne z [SemVer](https://semver.org/lang/pl/).
 
+## [2.0.0-beta.26] - 2026-10-13
+
+### Naprawione
+- **Pozycja robota nie była zapisywana** (od beta.23): kamera mapy dreame
+  podaje `vacuum_position` jako obiekt, nie słownik — odczyt cicho zwracał
+  brak pozycji. Przez to incydenty nie trafiały na mapę problemów i heatmapę,
+  wykrywanie utknięcia nie działało, a tor jazdy (objazdy) się nie zbierał.
+- Błąd bez pozycji (kamera bez danych w chwili błędu) dostaje ją, dopóki
+  robot stoi z tym błędem.
+
 ## [2.0.0-beta.25] - 2026-10-13
 
 ### Dodane

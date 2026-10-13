@@ -1222,7 +1222,9 @@ class QueueManager:
         st = self.hass.states.get(self._map_entity())
         try:
             pos = st.attributes.get("vacuum_position")
-            return [round(float(pos["x"])), round(float(pos["y"]))]
+            # dreame daje obiekt Point (x, y, a); dict tylko po serializacji
+            x, y = (pos["x"], pos["y"]) if isinstance(pos, dict) else (pos.x, pos.y)
+            return [round(float(x)), round(float(y))]
         except (AttributeError, KeyError, TypeError, ValueError):
             return None
 
@@ -1729,6 +1731,12 @@ class QueueManager:
             if not item.get("interrupted"):
                 self._mark_interrupted(item, self._interrupt_reason(a),
                                        notify_user=True)
+            last = self.incidents[-1] if self.incidents else None
+            if (last and last["pos"] is None and last["kind"] == "error"
+                    and last["room"] == item["room"]):
+                # robot stoi z bledem w miejscu incydentu — dopisz pozycje,
+                # gdy kamera mapy nie miala jej w chwili bledu
+                last["pos"] = self._position()
             waited = time.time() - item.get("interrupted_since", time.time())
             if waited > ERROR_ESCALATE_S and not item.get("err_escalated"):
                 # pierwsze powiadomienie latwo przeoczyc (log 23.09: robot
