@@ -5,6 +5,10 @@
  * w karcie ("Własna strefa" przy pierwszym użyciu), reset w opcjach
  * integracji. */
 
+// ?v= z adresu panelu przechodzi na moduly pomocnicze (cache Cloudflare/przegladarki)
+const { esc, errMsg } =
+  await import(`./dzq-common.js${new URL(import.meta.url).search}`);
+
 class DzqFeedbackPanel extends HTMLElement {
   set hass(hass) {
     this._hass = hass;
@@ -12,6 +16,11 @@ class DzqFeedbackPanel extends HTMLElement {
   }
   set narrow(_v) {}
   set panel(_v) {}
+
+  // HA odpina panel przy zmianie widoku i podpina z powrotem — wznow auto-odswiezanie
+  connectedCallback() {
+    if (this._built) this._setTimer();
+  }
 
   disconnectedCallback() {
     clearInterval(this._timer);
@@ -119,6 +128,7 @@ class DzqFeedbackPanel extends HTMLElement {
       if (auto.checked) this._timer = setInterval(() => this._load(), 5000);
     };
     auto.onchange = setTimer;
+    this._setTimer = setTimer;
     setTimer();
     this._load();
   }
@@ -129,6 +139,9 @@ class DzqFeedbackPanel extends HTMLElement {
     if (!this._hass) return;
     try {
       const data = await this._hass.callApi("get", "dreame_zone_queue/feedback_log");
+      // auto 5 s: bez zmian nie przebudowuj logu (zwijaloby rozwiniete attrs, skakal scroll)
+      if (data.log === this._raw && data.path === this._path && data.enabled === this._enabled) return;
+      this._enabled = data.enabled;
       this._raw = data.log || "";
       this._path = data.path;
       this.shadowRoot.getElementById("off").style.display = data.enabled ? "none" : "";
@@ -136,7 +149,8 @@ class DzqFeedbackPanel extends HTMLElement {
       this._renderTags();
       this._renderLog();
     } catch (e) {
-      this.shadowRoot.getElementById("log").textContent = "Błąd odczytu: " + e;
+      this._raw = undefined;  // po bledzie kolejny udany odczyt ma przerysowac log
+      this.shadowRoot.getElementById("log").textContent = "Błąd odczytu: " + errMsg(e);
     }
   }
 
@@ -226,15 +240,11 @@ class DzqFeedbackPanel extends HTMLElement {
     }
   }
 
-  _esc(s) {
-    return s.replace(/&/g, "&amp;").replace(/</g, "&lt;");
-  }
-
   _jsonHtml(obj) {
-    const json = this._esc(JSON.stringify(obj, null, 2));
+    const json = esc(JSON.stringify(obj, null, 2));
     return json
-      .replace(/"([^"]+)":/g, '<span class="jk">"$1"</span>:')
-      .replace(/: (".*?")(,?)$/gm, ': <span class="js">$1</span>$2')
+      .replace(/&quot;(.+?)&quot;:/g, '<span class="jk">&quot;$1&quot;</span>:')
+      .replace(/: (&quot;.*?&quot;)(,?)$/gm, ': <span class="js">$1</span>$2')
       .replace(/: (-?[\d.]+|true|false|null)(,?)$/gm, ': <span class="jn">$1</span>$2');
   }
 
@@ -265,14 +275,15 @@ class DzqFeedbackPanel extends HTMLElement {
       else if (e.tag === "DZQ_DECISION" || e.tag === "DZQ_EVENT") cls = "dec-line";
       else if (e.tag === "DZQ_ACTION") cls = "act-line";
       if (e.attrs === null) {
-        const line = this._esc(e.raw);
+        const line = esc(e.raw);
         return cls ? `<span class="${cls}">${line}</span>` : line;
       }
       const keys = Object.keys(e.attrs).length;
-      const preview = this._esc(JSON.stringify(e.attrs).slice(0, 100));
-      const head = this._esc(e.head);
+      const json = JSON.stringify(e.attrs);
+      const preview = esc(json.slice(0, 100));
+      const head = esc(e.head);
       const body = keys
-        ? `<details><summary>{…} ${keys} ${keys === 1 ? "klucz" : "kluczy"} · ${preview}${preview.length >= 100 ? "…" : ""}</summary><div class="json">${this._jsonHtml(e.attrs)}</div></details>`
+        ? `<details><summary>{…} ${keys} ${keys === 1 ? "klucz" : "kluczy"} · ${preview}${json.length > 100 ? "…" : ""}</summary><div class="json">${this._jsonHtml(e.attrs)}</div></details>`
         : "{}";
       const line = `${head}${body}`;
       return cls ? `<span class="${cls}">${line}</span>` : line;
@@ -308,7 +319,7 @@ class DzqFeedbackPanel extends HTMLElement {
   async _downloadFull() {
     try {
       this._save(await this._fetchAll(), "dreame_zone_queue_feedback.log");
-    } catch (e) { alert("Błąd pobierania: " + e); }
+    } catch (e) { alert("Błąd pobierania: " + errMsg(e)); }
   }
 
   async _downloadDiff() {
@@ -318,7 +329,7 @@ class DzqFeedbackPanel extends HTMLElement {
         .map((e) => (e.attrs !== null ? e.head + JSON.stringify(e.attrs) : e.raw))
         .join("\n");
       this._save(text, "dreame_zone_queue_feedback_diff.log");
-    } catch (e) { alert("Błąd pobierania: " + e); }
+    } catch (e) { alert("Błąd pobierania: " + errMsg(e)); }
   }
 
   async _archive() {
@@ -329,7 +340,7 @@ class DzqFeedbackPanel extends HTMLElement {
       const res = await this._hass.callApi("post", "dreame_zone_queue/feedback_archive");
       this._toast(`✓ Zarchiwizowano: ${res.archived}`);
       this._load();
-    } catch (e) { alert("Błąd archiwizacji: " + e); }
+    } catch (e) { alert("Błąd archiwizacji: " + errMsg(e)); }
   }
 
   _toast(msg) {

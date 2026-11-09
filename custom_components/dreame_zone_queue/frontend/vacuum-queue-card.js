@@ -1,4 +1,8 @@
-import { attachDraw, defaultMode } from "./dzq-draw.js";
+// ?v= z adresu karty przechodzi na moduly pomocnicze — inaczej Cloudflare i przegladarka
+// trzymaja stary plik do 4 h (max-age=14400) i karta laduje sie z nieaktualnym helperem.
+// dzq-draw.js ladowany leniwie w _zoneDialog — jego blad nie wywraca calej karty.
+const { esc, errMsg, mapCamera } =
+  await import(`./dzq-common.js${new URL(import.meta.url).search}`);
 /* Vacuum Queue Card — bundled with the Dreame Zone Queue integration.
  * v1.3.3: redesigned styling — card-style rows with status accents on
  * mobile, labeled fields, touch-sized controls, polished desktop table.
@@ -96,6 +100,7 @@ class VacuumQueueCard extends HTMLElement {
   }
   disconnectedCallback() {
     if (this._ro) { this._ro.disconnect(); this._ro = null; }
+    (this._modals || new Set()).forEach((close) => close());
   }
 
   set hass(hass) {
@@ -111,7 +116,6 @@ class VacuumQueueCard extends HTMLElement {
       : "missing";
     if (fp === this._fp) return;
     this._fp = fp;
-    this._unbusy();
     const struct = st
       ? (st.attributes.items || []).map((i) => `${i.id}:${i.status}:${i.interrupted ? 1 : 0}:${i.reason || ""}`).join("|")
         + "#" + st.state
@@ -120,9 +124,11 @@ class VacuumQueueCard extends HTMLElement {
         + "#" + (st.attributes.feedback ? "fb" : "")
       : "missing";
     if (struct === this._structKey && this.shadowRoot) {
+      // bez _unbusy: tyk baterii (last_updated odkurzacza) nie oznacza, ze akcja doszla
       this._patch(st);
       return;
     }
+    this._unbusy();
     this._structKey = struct;
     this._render(st);
   }
@@ -162,18 +168,26 @@ class VacuumQueueCard extends HTMLElement {
     if (pctEl) pctEl.textContent = activePct(items, vacObj);
   }
 
-  _call(service, data = {}) {
+  // true = backend przyjal wywolanie; blad -> toast i false
+  async _call(service, data = {}) {
     // guard: identyczne wywolanie w <400 ms = duplikat (log 24.07: bursty
     // remove 3-7x w kilka ms) - wysylamy raz
     const dedupKey = service + JSON.stringify(data);
     const now = Date.now();
-    if (this._lastCall && this._lastCall.k === dedupKey && now - this._lastCall.t < 400) return;
+    if (this._lastCall && this._lastCall.k === dedupKey && now - this._lastCall.t < 400) return false;
     this._lastCall = { k: dedupKey, t: now };
-    this._hass.callService("dreame_zone_queue", service, data);
     // akcje kolejki: natychmiastowy feedback — przyciski gasna do czasu
     // aktualizacji stanu (albo timeoutu awaryjnego), zero podwojnych klikniec
-    if (["start", "pause", "skip", "stop", "clear", "dock", "finish_room"].includes(service))
-      this._markBusy();
+    const busy = ["start", "pause", "skip", "stop", "clear", "dock", "finish_room"].includes(service);
+    if (busy) this._markBusy();
+    try {
+      await this._hass.callService("dreame_zone_queue", service, data);
+      return true;
+    } catch (e) {
+      if (busy) this._unbusy();
+      this._toast("⚠ " + errMsg(e));
+      return false;
+    }
   }
   _markBusy() {
     const root = this.shadowRoot;
@@ -195,19 +209,98 @@ class VacuumQueueCard extends HTMLElement {
     });
   }
 
-  // Modal notatki zyje w document.body (poza shadow DOM) — re-render karty
-  // w trakcie pisania nie moze go zniszczyc.
-  _noteDialog() {
-    if (document.querySelector(".dzq-note-modal")) return;
+  // Modale zyja w document.body (poza shadow DOM) — re-render karty w trakcie
+  // pisania nie moze ich zniszczyc. Zamykane: tlo, Escape, odpiecie karty.
+  _openModal(cls, boxCss) {
+    if (document.querySelector("." + cls)) return null;
     const wrap = document.createElement("div");
-    wrap.className = "dzq-note-modal";
+    wrap.className = cls;
     wrap.style.cssText =
       "position:fixed;inset:0;z-index:9999;background:rgba(0,0,0,.55);" +
       "display:flex;align-items:center;justify-content:center;padding:16px;";
     const box = document.createElement("div");
     box.style.cssText =
       "background:var(--card-background-color,#1c1c1e);color:var(--primary-text-color,#fff);" +
-      "border-radius:16px;padding:20px;width:min(480px,100%);box-shadow:0 12px 40px rgba(0,0,0,.5);";
+      "border-radius:16px;box-shadow:0 12px 40px rgba(0,0,0,.5);" + boxCss;
+    wrap.appendChild(box);
+    document.body.appendChild(wrap);
+    if (!this._modals) this._modals = new Set();
+    const onKey = (e) => { if (e.key === "Escape") close(); };
+    const close = () => {
+      wrap.remove();
+      document.removeEventListener("keydown", onKey);
+      this._modals.delete(close);
+    };
+    document.addEventListener("keydown", onKey);
+    wrap.addEventListener("click", (e) => { if (e.target === wrap) close(); });
+    this._modals.add(close);
+    return { wrap, box, close };
+  }
+
+  /* Podglad wlasnej strefy: mapa z kamery + prostokat wycinka (tylko odczyt). */
+  async _zonePreview(id) {
+    const st = this._hass.states[this._config.entity];
+    const attrs = (st && st.attributes) || {};
+    const it = (attrs.items || []).find((i) => i.id === id);
+    if (!it || !it.zone) return;
+    let draw_;
+    try {
+      draw_ = await import(`./dzq-draw.js${new URL(import.meta.url).search}`);
+    } catch (e) {
+      this._toast("⚠ Nie udało się wczytać mapy: " + errMsg(e));
+      return;
+    }
+    const m = this._openModal("dzq-zprev-modal",
+      "padding:18px;width:min(760px,100%);max-height:92vh;" +
+      "display:flex;flex-direction:column;gap:10px;overflow:auto;");
+    if (!m) return;
+    const { box, close } = m;
+    const camEnt = mapCamera(this._config, attrs.vacuum_entity);
+    const cam = this._hass.states[camEnt];
+    const [x1, y1, x2, y2] = it.zone;
+    const size = `${(Math.abs(x2 - x1) / 1000).toFixed(1)} × ${(Math.abs(y2 - y1) / 1000).toFixed(1)} m`;
+    const mode = it.water === "off" ? "samo odkurzanie"
+      : it.suction === "off" ? "samo mycie" : "odkurzanie + mycie";
+    box.innerHTML = `
+      <h3 style="margin:0;font-size:1.05em">▭ ${esc(it.room)}</h3>
+      <div style="font-size:.9em;color:var(--secondary-text-color)">${esc(size)} · ${esc(mode)}
+        · ssanie: ${esc(T_SUCTION[it.suction] || it.suction)} · mop: ${esc(T_WATER[it.water] || it.water)}
+        · ${esc(it.repeats)}× · [${it.zone.map((v) => esc(v)).join(", ")}]</div>
+      ${cam ? `<div style="position:relative;line-height:0;border-radius:10px;overflow:hidden">
+        <img class="pimg" src="${esc(cam.attributes.entity_picture || "")}" style="width:100%;display:block">
+        <svg class="psvg" style="position:absolute;inset:0;width:100%;height:100%" preserveAspectRatio="none"></svg>
+      </div>` : `<div>Brak kamery mapy (<code>${esc(camEnt)}</code>).</div>`}
+      <div class="pnote" style="font-size:.85em;color:var(--secondary-text-color)"></div>
+      <div style="display:flex;justify-content:flex-end">
+        <button data-x="close" style="font:inherit;padding:8px 14px;border-radius:10px;border:none;cursor:pointer;background:var(--secondary-background-color,#333);color:inherit">Zamknij</button>
+      </div>`;
+    box.querySelector('[data-x="close"]').onclick = close;
+    if (!cam) return;
+    const img = box.querySelector(".pimg");
+    const draw = () => {
+      if (!img.naturalWidth) return;
+      // kamera po zaladowaniu obrazka ma aktualne calibration_points
+      const c = this._hass.states[camEnt];
+      const calib = draw_.calibFromCamera(c && c.attributes.calibration_points) || attrs.map_calib;
+      const note = box.querySelector(".pnote");
+      if (!calib) { note.textContent = "Brak kalibracji mapy — nie mogę narysować strefy."; return; }
+      const toPx = draw_.mmToPx(calib);
+      const [ax, ay] = toPx(x1, y1), [bx, by] = toPx(x2, y2);
+      const svg = box.querySelector(".psvg");
+      svg.setAttribute("viewBox", `0 0 ${img.naturalWidth} ${img.naturalHeight}`);
+      svg.innerHTML = `<rect x="${Math.min(ax, bx)}" y="${Math.min(ay, by)}"
+        width="${Math.abs(bx - ax)}" height="${Math.abs(by - ay)}" fill="rgba(255,152,0,.25)"
+        stroke="#ff9800" stroke-width="3"/>`;
+      note.textContent = calib.src === "camera" ? "" : "Pozycja wg ręcznej kalibracji mapy.";
+    };
+    img.onload = () => { draw(); setTimeout(draw, 1500); };
+    if (img.complete) draw();
+  }
+
+  _noteDialog() {
+    const m = this._openModal("dzq-note-modal", "padding:20px;width:min(480px,100%);");
+    if (!m) return;
+    const { box, close } = m;
     box.innerHTML =
       `<h3 style="margin:0 0 10px;font-size:1.05em">\u{1F4DD} Notatka do dziennika feedbacku</h3>
        <textarea rows="5" placeholder="Co się właśnie stało? (zapiszę to razem z pełnym stanem robota i kolejki)"
@@ -220,34 +313,23 @@ class VacuumQueueCard extends HTMLElement {
          <button data-x="save" style="font:inherit;font-weight:600;padding:9px 16px;border-radius:10px;border:none;cursor:pointer;
            background:var(--primary-color,#03a9f4);color:#fff">Zapisz</button>
        </div>`;
-    wrap.appendChild(box);
-    document.body.appendChild(wrap);
     const ta = box.querySelector("textarea");
     ta.focus();
-    const close = () => wrap.remove();
-    wrap.addEventListener("click", (e) => { if (e.target === wrap) close(); });
     box.querySelector('[data-x="cancel"]').onclick = close;
-    box.querySelector('[data-x="save"]').onclick = () => {
+    box.querySelector('[data-x="save"]').onclick = async () => {
       const t = ta.value.trim();
       if (!t) { ta.focus(); return; }
-      this._hass.callService("dreame_zone_queue", "note", { text: t });
+      // zamkniecie dopiero po odpowiedzi backendu — przy bledzie tekst zostaje
+      if (!(await this._call("note", { text: t }))) return;
       close();
       this._toast("✓ Notatka zapisana w dzienniku feedbacku");
     };
   }
   async _historyModal(room) {
-    if (document.querySelector(".dzq-hist-modal")) return;
-    const wrap = document.createElement("div");
-    wrap.className = "dzq-hist-modal";
-    wrap.style.cssText =
-      "position:fixed;inset:0;z-index:9999;background:rgba(0,0,0,.55);" +
-      "display:flex;align-items:center;justify-content:center;padding:16px;";
-    const box = document.createElement("div");
-    box.style.cssText =
-      "background:var(--card-background-color,#1c1c1e);color:var(--primary-text-color,#fff);" +
-      "border-radius:16px;padding:20px;width:min(680px,100%);max-height:85vh;" +
-      "display:flex;flex-direction:column;box-shadow:0 12px 40px rgba(0,0,0,.5);";
-    const esc = (t) => String(t).replace(/&/g, "&amp;").replace(/</g, "&lt;");
+    const m = this._openModal("dzq-hist-modal",
+      "padding:20px;width:min(680px,100%);max-height:85vh;display:flex;flex-direction:column;");
+    if (!m) return;
+    const { box, close } = m;
     box.innerHTML =
       `<h3 style="margin:0 0 10px;font-size:1.05em">\u{1F552} Historia sprz\u0105tania: ${esc(room)}</h3>
        <div class="hbody" style="overflow:auto;min-height:60px">\u0141adowanie\u2026</div>
@@ -255,10 +337,6 @@ class VacuumQueueCard extends HTMLElement {
          <button data-x="close" style="font:inherit;padding:9px 16px;border-radius:10px;border:none;cursor:pointer;
            background:var(--secondary-background-color,#333);color:inherit">Zamknij</button>
        </div>`;
-    wrap.appendChild(box);
-    document.body.appendChild(wrap);
-    const close = () => wrap.remove();
-    wrap.addEventListener("click", (e) => { if (e.target === wrap) close(); });
     box.querySelector('[data-x="close"]').onclick = close;
     const body = box.querySelector(".hbody");
     try {
@@ -289,12 +367,12 @@ class VacuumQueueCard extends HTMLElement {
           <td>${d.toLocaleTimeString("pl-PL", { hour: "2-digit", minute: "2-digit" })}</td>
           <td>${r.pct != null ? r.pct + "%" : "\u2014"}</td>
           <td>${fmtMin(r.dur)}</td>
-          <td>${T_SUCTION[r.suction] || r.suction || "\u2014"}</td>
-          <td>${T_WATER[r.water] || r.water || "\u2014"}</td>
-          <td style="color:${OUTC[r.outcome] || "inherit"}">${OUT[r.outcome] || r.outcome}</td>
-          <td>${r.returns || 0}</td>
+          <td>${esc(T_SUCTION[r.suction] || r.suction || "\u2014")}</td>
+          <td>${esc(T_WATER[r.water] || r.water || "\u2014")}</td>
+          <td style="color:${OUTC[r.outcome] || "inherit"}">${esc(OUT[r.outcome] || r.outcome)}</td>
+          <td>${esc(r.returns || 0)}</td>
           <td>${((r.events || []).map((e) =>
-            `${e.reason} (${e.dur < 60 ? e.dur + " s" : fmtMin(e.dur)})`)
+            `${esc(e.reason)} (${e.dur < 60 ? esc(e.dur) + " s" : fmtMin(e.dur)})`)
             .join(", ")) || "\u2014"}</td>
         </tr>`;
       }).join("");
@@ -310,46 +388,55 @@ class VacuumQueueCard extends HTMLElement {
         td.style.borderBottom = "1px solid var(--divider-color,#333)";
       });
     } catch (e) {
-      body.textContent = "B\u0142\u0105d pobierania historii: " + e;
+      body.textContent = "B\u0142\u0105d pobierania historii: " + errMsg(e);
     }
   }
-  /* Modal "Wlasna strefa": mapa z kamery robota + kalibracja po znanym
-   * pokoju (funkcjonalnosc kalibratora pokoi) + rysowanie prostokata.
-   * Kalibracja px->mm trzymana w localStorage (dzq-map-calib). */
   /* Modal "Wlasna strefa": rysowanie jednorazowej powierzchni na mapie.
-   * Przy PIERWSZYM uzyciu (albo po zmianie rozmiaru mapy / wyczyszczeniu
-   * kalibracji w opcjach integracji) modal sam prosi o kalibracje:
-   * obrysowanie jednego znanego pokoju. Przelicznik px->mm zapisuje sie
-   * w Store integracji (przezywa restarty HA, wspolny dla urzadzen). */
-  _zoneDialog() {
-    if (document.querySelector(".dzq-zone-modal")) return;
+   * Przelicznik px->mm bierzemy z `calibration_points` kamery (aktualny dla
+   * kazdego renderu mapy). Tylko gdy kamera ich nie ma: reczna kalibracja
+   * (obrysowanie znanego pokoju, potwierdzana przyciskiem), zapisywana
+   * w Store integracji i ponawiana po zmianie rozmiaru mapy. */
+  async _zoneDialog() {
+    let draw_;
+    try {
+      draw_ = await import(`./dzq-draw.js${new URL(import.meta.url).search}`);
+    } catch (e) {
+      this._toast("⚠ Nie udało się wczytać edytora mapy: " + errMsg(e));
+      return;
+    }
+    const { attachDraw, defaultMode, calibFromCamera, mmToPx, roomOf } = draw_;
+    const m = this._openModal("dzq-zone-modal",
+      "padding:18px;width:min(760px,100%);max-height:92vh;" +
+      "display:flex;flex-direction:column;gap:10px;overflow:auto;");
+    if (!m) return;
+    const { wrap, box, close } = m;
     const hass = this._hass;
     const st = hass.states[this._config.entity];
     const attrs = (st && st.attributes) || {};
-    const vac = attrs.vacuum_entity || "";
-    const camEnt = this._config.map_camera
-      || ("camera." + (vac.split(".")[1] || "") + "_map");
+    const camEnt = mapCamera(this._config, attrs.vacuum_entity);
     const cam = hass.states[camEnt];
-    let calib = attrs.map_calib || null;
+    let camCalib = cam ? calibFromCamera(cam.attributes.calibration_points) : null;
+    let calib = camCalib || attrs.map_calib || null;
+    // faza okna (kalibracja / rysowanie) — spozniony tik z poprzedniej fazy
+    // nie moze przerysowac okna (skasowalby narysowana strefe)
+    let phase = 0;
+    // Po restarcie HA calibration_points = None, dopoki ktos nie pobierze
+    // obrazka mapy — po zaladowaniu mapy w oknie czekamy na atrybut do ~5 s.
+    const waitCamCalib = (done) => {
+      const my = phase;
+      let n = 0;
+      const tick = () => {
+        if (my !== phase || !wrap.isConnected) return;
+        const c = this._hass.states[camEnt];
+        camCalib = c ? calibFromCamera(c.attributes.calibration_points) : null;
+        if (camCalib) { calib = camCalib; done(true); }
+        else if (++n < 5) setTimeout(tick, 1000);
+        else done(false);
+      };
+      tick();
+    };
     const zones = attrs.room_zones || {};
     const roomNames = Object.keys(zones).sort();
-    const esc = (t) => String(t).replace(/&/g, "&amp;").replace(/</g, "&lt;");
-
-    const wrap = document.createElement("div");
-    wrap.className = "dzq-zone-modal";
-    wrap.style.cssText =
-      "position:fixed;inset:0;z-index:9999;background:rgba(0,0,0,.55);" +
-      "display:flex;align-items:center;justify-content:center;padding:16px;";
-    const box = document.createElement("div");
-    box.style.cssText =
-      "background:var(--card-background-color,#1c1c1e);color:var(--primary-text-color,#fff);" +
-      "border-radius:16px;padding:18px;width:min(760px,100%);max-height:92vh;" +
-      "display:flex;flex-direction:column;gap:10px;overflow:auto;" +
-      "box-shadow:0 12px 40px rgba(0,0,0,.5);";
-    wrap.appendChild(box);
-    document.body.appendChild(wrap);
-    const close = () => wrap.remove();
-    wrap.addEventListener("click", (e) => { if (e.target === wrap) close(); });
 
     const selCss = "font:inherit;padding:6px 8px;border-radius:8px;" +
       "border:1px solid var(--divider-color,#444);" +
@@ -357,7 +444,7 @@ class VacuumQueueCard extends HTMLElement {
     const btnCss = "font:inherit;padding:8px 14px;border-radius:10px;border:none;cursor:pointer;";
     const btnOn = `${btnCss}background:var(--primary-color,#03a9f4);color:#fff`;
     const btnOff = `${btnCss}background:var(--secondary-background-color,#333);color:inherit`;
-    const pic = cam ? (cam.attributes.entity_picture || "") : "";
+    const pic = esc(cam ? (cam.attributes.entity_picture || "") : "");
     const mapBlock = `
       <div class="zwrap" style="position:relative;user-select:none;touch-action:none;line-height:0;overflow:hidden;border-radius:10px">
         <img class="zimg" src="${pic}" draggable="false" style="width:100%;display:block">
@@ -368,7 +455,7 @@ class VacuumQueueCard extends HTMLElement {
       if (b) b.onclick = close;
     };
     const staleFor = (img) =>
-      calib && img.naturalWidth && calib.iw &&
+      !camCalib && calib && img.naturalWidth && calib.iw &&
       Math.abs(calib.iw - img.naturalWidth) > 1;
 
     if (!cam) {
@@ -383,23 +470,49 @@ class VacuumQueueCard extends HTMLElement {
     }
 
     /* ---------- FAZA 1: kalibracja (pierwsze uzycie / zmiana mapy) ------ */
+    // Wyglada inaczej niz rysowanie strefy (pomaranczowa rama + baner), zeby
+    // nie dalo sie jej pomylic. Gdy jest poprzednia kalibracja, jej pokoje
+    // sa obrysowane na mapie — wystarczy potwierdzic albo obrysowac od nowa.
+    const CAL = "var(--warning-color,#ff9800)";
     const renderCalib = (note) => {
-      if (!roomNames.length) {
+      phase++;
+      box.style.border = `3px solid ${CAL}`;
+      // reczna kalibracja niemozliwa (brak pokoi / backend da 403 nie-adminowi):
+      // pokaz mape — jej pobranie wyzwala calibration_points kamery
+      const blocked = !roomNames.length
+        ? `Brak zdefiniowanych pokoi ze strefami — ręczna kalibracja potrzebuje
+           jednego znanego pokoju (opcje integracji).`
+        : !(hass.user && hass.user.is_admin)
+          ? `Ręczną kalibrację mapy może wykonać tylko <b>administrator</b>
+             (to okno na jego koncie albo opcje integracji → Kalibracja mapy).`
+          : "";
+      if (blocked) {
         box.innerHTML = `<h3 style="margin:0">🎯 Kalibracja mapy</h3>
-          <div style="line-height:1.5">Brak zdefiniowanych pokoi ze strefami —
-          kalibracja potrzebuje jednego znanego pokoju (opcje integracji).</div>
+          <div style="line-height:1.5">${blocked} Czekam jeszcze na przelicznik
+          z kamery robota…</div>
+          ${mapBlock}
           <div style="display:flex;justify-content:flex-end">
           <button data-x="close" style="${btnOff}">Zamknij</button></div>`;
         wireClose();
+        box.querySelector(".zimg").onload = () => waitCamCalib((ok) => {
+          if (!ok) return;
+          this._toast("✓ Mapa skalibrowana automatycznie (kamera robota)");
+          renderDraw();
+        });
         return;
       }
+      const prev = calib;   // poprzednia kalibracja (reczna) albo null
       box.innerHTML = `
-        <h3 style="margin:0;font-size:1.05em">🎯 Pierwszy raz: kalibracja mapy</h3>
-        ${note ? `<div style="font-size:.9em;color:var(--warning-color,#ff9800)">${note}</div>` : ""}
+        <div style="margin:-18px -18px 0;padding:10px 18px;background:${CAL};color:#000;
+          font-weight:700;border-radius:13px 13px 0 0;letter-spacing:.02em">
+          🎯 TRYB KALIBRACJI MAPY — to nie jest dodawanie strefy</div>
+        ${note ? `<div style="font-size:.9em;color:${CAL}">${note}</div>` : ""}
         <div style="font-size:.9em;line-height:1.5;color:var(--secondary-text-color)">
-          Wybierz pokój, którego położenie znasz, i obrysuj go na mapie.
-          Robisz to raz — przelicznik zapisze się w integracji i przeżyje
-          restarty HA.</div>
+          ${prev
+            ? `Pomarańczowe obrysy = pokoje wg <b>ostatniej kalibracji</b>.
+               Pasują do mapy? Zatwierdź. Nie pasują? Wybierz pokój i obrysuj go od nowa.`
+            : `Wybierz pokój, którego położenie znasz, i obrysuj go na mapie,
+               potem zatwierdź. Przelicznik zapisze się w integracji.`}</div>
         <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;font-size:.9em">
           <select class="croom" style="${selCss}">${roomNames.map((r) =>
             `<option>${esc(r)}</option>`).join("")}</select>
@@ -408,50 +521,99 @@ class VacuumQueueCard extends HTMLElement {
           <button data-x="cundo" style="${btnOff};display:none">↩ Cofnij</button>
           <button data-x="cdone" style="${btnOn};display:none">✓ Zakończ</button>
         </div>
-        ${mapBlock}
+        <div style="outline:3px dashed ${CAL};outline-offset:2px;border-radius:10px">${mapBlock}</div>
         <div class="chint" style="font-size:.88em;color:var(--secondary-text-color)">
           Obrysuj: <b></b> · dwa palce / kółko = zoom i przesuwanie</div>
-        <div style="display:flex;justify-content:flex-end">
+        <div style="display:flex;justify-content:flex-end;gap:8px">
           <button data-x="close" style="${btnOff}">Anuluj</button>
+          <button data-x="csave" style="${btnCss}font-weight:600;background:${CAL};color:#000"></button>
         </div>`;
       wireClose();
       const img = box.querySelector(".zimg");
       const zwrap = box.querySelector(".zwrap");
       const roomSel = box.querySelector(".croom");
       const hintRoom = box.querySelector(".chint b");
-      hintRoom.textContent = roomSel.value;
-      roomSel.onchange = () => { hintRoom.textContent = roomSel.value; };
+      const saveBtn = box.querySelector('[data-x="csave"]');
       const toNat = (x, y) => {
         const f = img.naturalWidth / img.clientWidth;
         return [x * f, y * f];
       };
+      // obszar czeka na „Zatwierdź" — przeciagniecie niczego nie zapisuje
+      let picked = null;   // [nL, nT, nR, nB] w naturalnych px
+      const setPicked = (b) => {
+        picked = b;
+        const ok = !!(b || prev);
+        saveBtn.disabled = !ok;
+        saveBtn.style.opacity = ok ? "1" : ".5";
+        saveBtn.textContent = b ? "✓ Zatwierdź nowy obszar"
+          : prev ? "✓ Ostatnia kalibracja pasuje" : "✓ Zatwierdź obszar";
+      };
+      // pokoje rzutowane przez poprzednia kalibracje (mm -> px wyswietlane)
+      const underlay = (scale) => {
+        if (!prev || !img.naturalWidth || !img.clientWidth) return "";
+        const f = img.clientWidth / img.naturalWidth;
+        const toPx = mmToPx(prev);
+        const px = (x, y) => toPx(x, y).map((v) => v * f);
+        return roomNames.map((n) => {
+          const z = zones[n];
+          const [x1, y1] = px(z[0], z[1]), [x2, y2] = px(z[2], z[3]);
+          const L = Math.min(x1, x2), T = Math.min(y1, y2);
+          const sel = n === roomSel.value;
+          return `<rect x="${L}" y="${T}" width="${Math.abs(x2 - x1)}" height="${Math.abs(y2 - y1)}"
+              fill="${sel ? "rgba(255,152,0,.15)" : "none"}" stroke="#ff9800"
+              stroke-width="${(sel ? 2.5 : 1.2) / scale}" stroke-dasharray="${6 / scale} ${4 / scale}"/>
+            <text x="${L + 4 / scale}" y="${T + 13 / scale}" font-size="${11 / scale}"
+              fill="#ff9800" font-weight="${sel ? 700 : 400}">${esc(n)}</text>`;
+        }).join("");
+      };
       const draw = attachDraw(zwrap, img, box.querySelector(".zsvg"), {
-        shape: async (sh) => {
-          const z = zones[roomSel.value];
-          if (!z) return;
+        underlay,
+        shape: (sh) => {
           const nat = sh.pts.map((p) => toNat(p[0], p[1]));
           const nL = Math.min(...nat.map((p) => p[0]));
           const nR = Math.max(...nat.map((p) => p[0]));
           const nT = Math.min(...nat.map((p) => p[1]));
           const nB = Math.max(...nat.map((p) => p[1]));
-          if (nR - nL < 8 || nB - nT < 8) return;
+          setPicked(nR - nL < 8 || nB - nT < 8 ? null : [nL, nT, nR, nB]);
+        },
+        progress: () => setPicked(null),
+      });
+      img.onload = () => {
+        draw.redraw();
+        waitCamCalib((ok) => {
+          if (!ok) return;
+          this._toast("✓ Mapa skalibrowana automatycznie (kamera robota)");
+          renderDraw();
+        });
+      };
+      hintRoom.textContent = roomSel.value;
+      roomSel.onchange = () => { hintRoom.textContent = roomSel.value; draw.redraw(); };
+      saveBtn.onclick = async () => {
+        let nc;
+        if (picked) {
+          const z = zones[roomSel.value];
+          if (!z) return;
+          const [nL, nT, nR, nB] = picked;
           const vxmin = Math.min(z[0], z[2]), vxmax = Math.max(z[0], z[2]);
           const vymin = Math.min(z[1], z[3]), vymax = Math.max(z[1], z[3]);
           // os Y odkurzacza rosnie do gory ekranu (Dreame) -> flip
           const ax = (vxmax - vxmin) / (nR - nL);
           const ay = (vymin - vymax) / (nB - nT);
-          const nc = { ax, bx: vxmin - ax * nL, ay, by: vymax - ay * nT,
-                       iw: img.naturalWidth, ih: img.naturalHeight };
-          try {
-            await hass.callApi("post", "dreame_zone_queue/map_calib", { calib: nc });
-            calib = nc;
-            this._toast("✓ Kalibracja zapisana");
-            renderDraw();
-          } catch (err) {
-            this._toast("Błąd zapisu kalibracji: " + err);
-          }
-        },
-      });
+          nc = { ax, bx: vxmin - ax * nL, ay, by: vymax - ay * nT };
+        } else if (prev) {
+          nc = { ax: prev.ax, bx: prev.bx, ay: prev.ay, by: prev.by };
+        } else return;
+        nc.iw = img.naturalWidth;
+        nc.ih = img.naturalHeight;
+        try {
+          await hass.callApi("post", "dreame_zone_queue/map_calib", { calib: nc });
+          calib = nc;
+          this._toast("✓ Kalibracja zapisana");
+          renderDraw();
+        } catch (err) {
+          this._toast("Błąd zapisu kalibracji: " + errMsg(err));
+        }
+      };
       const mr = box.querySelector('[data-x="crect"]');
       const mp = box.querySelector('[data-x="cpoly"]');
       const mu = box.querySelector('[data-x="cundo"]');
@@ -477,6 +639,8 @@ class VacuumQueueCard extends HTMLElement {
 
     /* ---------- FAZA 2: rysowanie strefy ------------------------------- */
     const renderDraw = () => {
+      phase++;
+      box.style.border = "";
       box.innerHTML = `
         <h3 style="margin:0;font-size:1.05em;display:flex;align-items:center;gap:8px">
           ▭ Własna strefa — narysuj na mapie
@@ -486,12 +650,13 @@ class VacuumQueueCard extends HTMLElement {
         </h3>
         <div class="zhelp" style="display:none;font-size:.88em;line-height:1.55;padding:10px 12px;
           border-radius:10px;background:var(--secondary-background-color,rgba(127,127,127,.15))">
-          <b>Mapa się rozkalibrowała?</b> (strefy trafiają obok narysowanego
-          miejsca) → Ustawienia → Urządzenia i usługi → <b>Dreame Zone
-          Queue</b> → ⚙ Konfiguruj → <b>Kalibracja mapy</b> → zaznacz
-          „Wyczyść kalibrację". Przy następnym otwarciu tego okna karta
-          poprosi o ponowne obrysowanie znanego pokoju. Gdy robot zmieni
-          rozmiar mapy, to okno samo przełączy się w tryb kalibracji.
+          ${camCalib ? `Przelicznik mapy pochodzi z kamery robota
+          (<code>calibration_points</code>) i aktualizuje się sam — ręczna
+          kalibracja nie jest potrzebna.` : `<b>Mapa się rozkalibrowała?</b>
+          (strefy trafiają obok narysowanego miejsca) → Ustawienia → Urządzenia
+          i usługi → <b>Dreame Zone Queue</b> → ⚙ Konfiguruj → <b>Kalibracja
+          mapy</b> → zaznacz „Wyczyść kalibrację". Gdy robot zmieni rozmiar
+          mapy, to okno samo pokaże ostatnią kalibrację do potwierdzenia.`}
         </div>
         <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;font-size:.9em">
           <button data-x="mrect" style="${btnOn}">▭ Prostokąt</button>
@@ -533,19 +698,21 @@ class VacuumQueueCard extends HTMLElement {
       const undoBtn = box.querySelector('[data-x="mundo"]');
       let zoneMm = null;
 
-      img.onload = () => {
+      img.onload = () => waitCamCalib(() => {
         if (staleFor(img)) {
           renderCalib("Mapa zmieniła rozmiar od ostatniej kalibracji — " +
-            "obrysuj znany pokój jeszcze raz.");
+            "sprawdź, czy obrysy pokoi nadal pasują.");
         }
-      };
+      });
       const toNat = (x, y) => {
         const f = img.naturalWidth / img.clientWidth;
         return [x * f, y * f];
       };
       const toMm = (nx, ny) => {
         const r = (v) => Math.round(v / 10) * 10;
-        return [r(calib.ax * nx + calib.bx), r(calib.ay * ny + calib.by)];
+        // axy/ayx tylko w kalibracji z kamery (obrot mapy); reczna ich nie ma
+        return [r(calib.ax * nx + (calib.axy || 0) * ny + calib.bx),
+                r((calib.ayx || 0) * nx + calib.ay * ny + calib.by)];
       };
       const bboxToMm = (dispPts) => {
         const mm = dispPts.map((p) => toMm(...toNat(p[0], p[1])));
@@ -562,7 +729,8 @@ class VacuumQueueCard extends HTMLElement {
           return;
         }
         zoneMm = z;
-        info.textContent = `Strefa: [${z.join(", ")}] · ` +
+        const inRoom = roomOf(z, zones);
+        info.textContent = (inRoom ? `${inRoom} · ` : "") + `strefa [${z.join(", ")}] · ` +
           `${(wMm / 1000).toFixed(1)} × ${(hMm / 1000).toFixed(1)} m${note || ""}`;
         okBtn.disabled = false;
         okBtn.style.opacity = "1";
@@ -609,15 +777,19 @@ class VacuumQueueCard extends HTMLElement {
       });
       setMode(defaultMode());
 
-      okBtn.onclick = () => {
-        if (!zoneMm) return;
-        this._call("add", {
-          room: box.querySelector(".zname").value.trim() || "Strefa",
+      okBtn.onclick = async () => {
+        if (!zoneMm || okBtn.disabled) return;
+        okBtn.disabled = true;
+        const ok = await this._call("add", {
+          room: ((r, n) => r ? `${r} · ${n || "strefa"}` : (n || "Strefa"))(
+            roomOf(zoneMm, zones), box.querySelector(".zname").value.trim()),
           zone: zoneMm,
           suction: box.querySelector(".zsuction").value,
           water: box.querySelector(".zwater").value,
           repeats: Number(box.querySelector(".zrepeats").value),
         });
+        // blad: _call pokazal toast, okno zostaje z narysowana strefa
+        if (!ok) { okBtn.disabled = !zoneMm; return; }
         close();
         this._toast("✓ Strefa dodana do kolejki");
       };
@@ -668,7 +840,16 @@ class VacuumQueueCard extends HTMLElement {
     if (!st) {
       this.shadowRoot.innerHTML =
         "<ha-card><div style='padding:16px'>Entity not found: " +
-        c.entity + "</div></ha-card>";
+        esc(c.entity) + "</div></ha-card>";
+      this._restoreScroll(scrolls);
+      return;
+    }
+    // integracja wylaczona / w trakcie przeladowania — nie udawaj pustej kolejki
+    if (st.state === "unavailable" || st.state === "unknown") {
+      this.shadowRoot.innerHTML =
+        `<ha-card><div style="padding:16px">${c.show_header ? `<b>${esc(c.title)}</b><br>` : ""}
+        <span style="color:var(--secondary-text-color)">\u26A0 Integracja niedost\u0119pna
+        (${esc(st.state)}) — sprawd\u017A Dreame Zone Queue w Ustawienia \u2192 Urz\u0105dzenia i us\u0142ugi.</span></div></ha-card>`;
       this._restoreScroll(scrolls);
       return;
     }
@@ -677,7 +858,9 @@ class VacuumQueueCard extends HTMLElement {
     const roomIcons = st.attributes.room_icons || {};
     const ric = (name, own) => {
       const i = own || roomIcons[name] || "";
-      return i ? i + " " : "";
+      // ikony pokoi to emoji; mdi:* (np. własna strefa) renderuje ha-icon
+      if (i.startsWith("mdi:")) return `<ha-icon icon="${esc(i)}" style="--mdc-icon-size:1.1em;opacity:.8"></ha-icon> `;
+      return i ? esc(i) + " " : "";
     };
     const running = st.state === "running";
     const ro = !!c.read_only;
@@ -694,7 +877,7 @@ class VacuumQueueCard extends HTMLElement {
 
     const sel = (opts, cur, cls, id, labels, suffix = "") =>
       `<select class="${cls}" data-id="${id}">` +
-      opts.map((o) => `<option value="${o}" ${String(o) === String(cur) ? "selected" : ""}>${(labels && labels[o]) || o}${suffix}</option>`).join("") +
+      opts.map((o) => `<option value="${o}" ${String(o) === String(cur) ? "selected" : ""}>${esc((labels && labels[o]) || o)}${suffix}</option>`).join("") +
       `</select>`;
 
     const rows = items.map((it, idx) => {
@@ -707,7 +890,7 @@ class VacuumQueueCard extends HTMLElement {
           `<button class="ib down" data-id="${it.id}" title="Niżej">\u25BC</button>`
         : "";
       const gripBtn = `<span class="grip" title="Przeciągnij">\u2630</span>`;
-      const hist = `<button class="ib hist" data-room="${it.room.replace(/"/g, "&quot;")}"
+      const hist = `<button class="ib hist" data-room="${esc(it.room)}"
                     title="Historia sprz\u0105tania">\u{1F552}</button>`;
       const ctl = ro ? hist : pending
         ? (c.grip_position === "buttons" ? gripBtn : "") + arrows + hist + del
@@ -717,19 +900,19 @@ class VacuumQueueCard extends HTMLElement {
       const suctionOpts = SUCTION;
       const waterOpts = WATER;
       const slim = ro || !c.show_arrows;
-      return `<tr class="${it.status}${slim ? " slim" : ""}" data-id="${it.id}" ${pending && !ro ? 'draggable="true"' : ""}>
+      return `<tr class="${esc(it.status)}${slim ? " slim" : ""}" data-id="${it.id}" ${pending && !ro ? 'draggable="true"' : ""}>
         ${gripCell}
         <td class="num">${idx + 1}</td>
         <td class="st">${STATUS_ICON[it.status] || ""}</td>
         <td class="room">${selMode && pending
             ? `<input type="checkbox" class="pick" data-id="${it.id}" ${this._sel.has(it.id) ? "checked" : ""}>`
-            : ""}<span class="rst">${STATUS_ICON[it.status] || ""} </span>${ric(it.room, it.icon)}${it.room}<span class="est" data-id="${it.id}">${estTxt(it)}</span>${active ? `<span class="pct">${activePct(items, vacObj)}</span>` : ""}
-          ${active ? (it.interrupted
-              ? `<span class="now intr">⏸ ${it.reason || "przerwane"}</span>`
-              : '<span class="now">sprząta teraz</span>') : ""}</td>
-        <td class="sx"><span class="fl">Ssanie</span>${editable ? sel(suctionOpts, it.suction, "suction", it.id, T_SUCTION) : `<span class="val">${T_SUCTION[it.suction] || it.suction}</span>`}</td>
-        <td class="wx"><span class="fl">Mop</span>${editable ? sel(waterOpts, it.water, "water", it.id, T_WATER) : `<span class="val">${T_WATER[it.water] || it.water}</span>`}</td>
-        <td class="rep"><span class="fl">Powt.</span>${pending ? sel(REPEATS, it.repeats, "repeats", it.id, null, "\u00D7") : `<span class="val">${it.repeats}\u00D7</span>`}</td>
+            : ""}<span class="rst">${STATUS_ICON[it.status] || ""} </span>${it.custom
+              ? `<span class="zprev" data-id="${it.id}" role="button" tabindex="0" title="Pokaż wycinek na mapie">${ric(it.room, it.icon)}${esc(it.room)}</span>`
+              : `${ric(it.room, it.icon)}${esc(it.room)}`}${active ? "" : `<span class="est" data-id="${it.id}">${estTxt(it)}</span>`}
+          ${active ? `<span class="stline"><span class="badge${it.interrupted ? " intr" : ""}">${it.interrupted ? `⏸ ${esc(it.reason || "przerwane")}` : "▶ sprząta teraz"}</span><span class="pct">${activePct(items, vacObj)}</span><span class="est" data-id="${it.id}">${estTxt(it)}</span></span>` : ""}</td>
+        <td class="sx"><span class="fl">Ssanie</span>${editable ? sel(suctionOpts, it.suction, "suction", it.id, T_SUCTION) : `<span class="val">${esc(T_SUCTION[it.suction] || it.suction)}</span>`}</td>
+        <td class="wx"><span class="fl">Mop</span>${editable ? sel(waterOpts, it.water, "water", it.id, T_WATER) : `<span class="val">${esc(T_WATER[it.water] || it.water)}</span>`}</td>
+        <td class="rep"><span class="fl">Powt.</span>${pending ? sel(REPEATS, it.repeats, "repeats", it.id, null, "\u00D7") : `<span class="val">${esc(it.repeats)}\u00D7</span>`}</td>
         <td class="ctl">${ctl}</td>
       </tr>`;
     }).join("");
@@ -772,10 +955,17 @@ class VacuumQueueCard extends HTMLElement {
         .num { text-align: center; width: 2em; color: var(--secondary-text-color); }
         .st { width: 1.6em; text-align: center; }
         .room { font-weight: 500; }
-        .now { display: none; }
-        .now.intr { display: inline-block; margin-left: 8px; font-size: .75em;
-                    font-weight: 600; color: var(--warning-color, #ff9800);
-                    white-space: nowrap; }
+        .stline { display: flex; align-items: center; gap: 8px;
+                  flex-wrap: wrap; margin-top: 4px; white-space: normal; }
+        .stline .est, .stline .pct { margin-left: 0; }
+        .badge { display: inline-block; padding: 2px 9px; border-radius: 11px;
+                 font-size: .74em; font-weight: 600; letter-spacing: .03em;
+                 white-space: nowrap; color: var(--primary-color);
+                 border: 1px solid var(--primary-color);
+                 background: color-mix(in srgb, var(--primary-color) 15%, transparent); }
+        .badge.intr { color: var(--warning-color, #ff9800);
+                 border-color: var(--warning-color, #ff9800);
+                 background: color-mix(in srgb, var(--warning-color, #ff9800) 15%, transparent); }
         .rep { width: 4.8em; }
         .rst { display: none; }
         .tblwrap { position: relative; }
@@ -794,6 +984,8 @@ class VacuumQueueCard extends HTMLElement {
               color: var(--primary-text-color); cursor: pointer;
               padding: 3px 8px; margin-left: 4px; }
         .ib:hover { background: var(--secondary-background-color); }
+        .zprev { cursor: pointer; }
+        .zprev:hover { text-decoration: underline dotted; text-underline-offset: 3px; }
         .ib.del { border-color: var(--error-color, #d32f2f); color: var(--error-color, #d32f2f); }
         .ib.del.armed { background: var(--error-color, #d32f2f);
                         border-color: var(--error-color, #d32f2f); color: #fff; }
@@ -880,11 +1072,8 @@ class VacuumQueueCard extends HTMLElement {
         :host(.narrow) table { font-size: 16px; }
         :host(.narrow) td.room { grid-area: room; font-weight: 650; font-size: 17px;
                                  overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-        :host(.narrow) .now { display: block; font-size: .7em; font-weight: 600;
-          text-transform: uppercase; letter-spacing: .07em;
-          color: var(--primary-color); margin-top: 1px; }
-        :host(.narrow) .now.intr { color: var(--warning-color, #ff9800);
-          margin-left: 0; text-transform: none; letter-spacing: normal; }
+        :host(.narrow) .stline { gap: 7px; margin-top: 5px; }
+        :host(.narrow) .badge { font-size: 12px; padding: 2px 10px; }
         :host(.narrow) td.ctl { grid-area: ctl; justify-self: end; width: auto; }
         :host(.narrow) td.sx { grid-area: sx; }
         :host(.narrow) td.wx { grid-area: wx; }
@@ -897,7 +1086,6 @@ class VacuumQueueCard extends HTMLElement {
           padding: 8px 10px; font-size: 16px; }
         :host(.narrow) .ib { min-width: 42px; height: 40px; margin-left: 6px;
           border-radius: 10px; font-size: 16px; }
-        :host(.narrow) .now { font-size: 11px; }
         :host(.narrow) .rst { font-size: 16px; }
         :host(.narrow) .grip { display: inline-flex; align-items: center; justify-content: center;
           min-width: 36px; height: 36px; border: 1px solid var(--divider-color);
@@ -953,18 +1141,18 @@ class VacuumQueueCard extends HTMLElement {
           border-left: 4px solid var(--primary-color); }
       </style>
       <ha-card>
-        ${c.show_header ? `<h2>${c.title}
+        ${c.show_header ? `<h2>${esc(c.title)}
           <span class="hdr">${st.attributes.feedback
               ? `<button class="ib notebtn" id="noteBtn" title="Zapisz notatkę do dziennika feedbacku">\u{1F4DD}</button>`
-              : ""}<span class="badge ${st.state}">${{ running: "PRACUJE", paused: "WSTRZYMANA", idle: "BEZCZYNNA" }[st.state] || st.state}</span></span>
+              : ""}<span class="badge ${esc(st.state)}">${esc({ running: "PRACUJE", paused: "WSTRZYMANA", idle: "BEZCZYNNA" }[st.state] || st.state)}</span></span>
         </h2>` : ""}
-        ${c.show_robot_state ? `<div class="sub">${robotLine(st, vacObj)}</div>` : ""}
+        ${c.show_robot_state ? `<div class="sub">${esc(robotLine(st, vacObj))}</div>` : ""}
         ${c.show_progress && prog.total > 0 ? `<div class="prog">
           <div class="pbar"><div class="pfill" style="width:${Math.round(100 * prog.done / prog.total)}%"></div></div>
           <span class="ptxt">${prog.done}/${prog.total} pokoi${etaS ? ` \u00B7 ~${Math.max(1, Math.round(etaS / 60))} min` : ""}</span>
         </div>` : ""}
         ${items.length
-          ? `<div class="tblwrap v-${c.grip_position}"><table><thead><tr>
+          ? `<div class="tblwrap v-${esc(c.grip_position)}"><table><thead><tr>
                <th>#</th><th></th><th>Pokój</th><th>Ssanie</th><th>Mop</th><th>Powt.</th><th></th>
              </tr></thead><tbody>${rows}</tbody></table></div>`
           : `<div class="empty"><span class="e-ic">\u{1F9F9}</span>Kolejka pusta — dodaj pokoje poniżej.</div>`}
@@ -992,7 +1180,7 @@ class VacuumQueueCard extends HTMLElement {
         ${c.show_add_row && !ro ? `<div class="sec">
           <div class="sechd">Dodaj pok\u00F3j</div>
           <div class="addrow">
-          <select id="addRoom">${rooms.map((r) => `<option value="${r}">${ric(r)}${r}</option>`).join("")}</select>
+          <select id="addRoom">${rooms.map((r) => `<option value="${esc(r)}">${ric(r)}${esc(r)}</option>`).join("")}</select>
           <button class="btn" id="add" ${rooms.length ? "" : "disabled"}>+ Dodaj</button>
           <button class="btn" id="zoneAdd" title="Narysuj jednorazow\u0105 stref\u0119 na mapie">\u25AD W\u0142asna strefa</button>
           </div>
@@ -1014,7 +1202,7 @@ class VacuumQueueCard extends HTMLElement {
           <div class="presets">
           <select id="presetSel" ${presets.length ? "" : "disabled"}>
             ${presets.length
-              ? presets.map((p) => `<option value="${p}">\u2B50 ${p}</option>`).join("")
+              ? presets.map((p) => `<option value="${esc(p)}">\u2B50 ${esc(p)}</option>`).join("")
               : `<option>\u2014 brak preset\u00F3w \u2014</option>`}
           </select>
           <button class="btn" id="pLoad" ${presets.length ? "" : "disabled"} title="Wczytaj preset (zast\u0119puje kolejk\u0119)">\u25B8 Wczytaj</button>
@@ -1113,6 +1301,10 @@ class VacuumQueueCard extends HTMLElement {
         }
         this._call("remove", { item_id: Number(b.dataset.id) });
       };
+    });
+    root.querySelectorAll(".zprev").forEach((b) => {
+      b.onclick = () => this._zonePreview(Number(b.dataset.id));
+      b.onkeydown = (e) => { if (e.key === "Enter") b.onclick(); };
     });
     root.querySelectorAll(".hist").forEach((b) => {
       b.onclick = () => this._historyModal(b.dataset.room);
@@ -1240,6 +1432,7 @@ class VacuumQueueCard extends HTMLElement {
 const EDITOR_SCHEMA = [
   { name: "entity", required: true, selector: { entity: { domain: "sensor" } } },
   { name: "title", selector: { text: {} } },
+  { name: "map_camera", selector: { entity: { domain: "camera" } } },
   {
     type: "grid",
     name: "",
@@ -1267,6 +1460,7 @@ const EDITOR_SCHEMA = [
 const EDITOR_LABELS = {
   entity: "Encja kolejki (sensor)",
   title: "Tytuł karty",
+  map_camera: "Kamera mapy (puste = camera.<robot>_map)",
   show_header: "Pokaż nagłówek",
   show_robot_state: "Pokaż stan robota",
   show_add_row: "Pokaż dodawanie pokoi",
@@ -1282,7 +1476,7 @@ const EDITOR_LABELS = {
 
 class VacuumQueueCardEditor extends HTMLElement {
   setConfig(config) {
-    this._config = { ...DEFAULTS, ...config };
+    this._config = config;   // surowa konfiguracja — DEFAULTS tylko do wyswietlenia
     this._render();
   }
   set hass(hass) {
@@ -1294,7 +1488,12 @@ class VacuumQueueCardEditor extends HTMLElement {
       this._form = document.createElement("ha-form");
       this._form.computeLabel = (s) => EDITOR_LABELS[s.name] || s.name;
       this._form.addEventListener("value-changed", (ev) => {
-        const config = { type: "custom:vacuum-queue-card", ...ev.detail.value };
+        // do YAML tylko klucze ustawione przez uzytkownika albo rozne od domyslnych
+        const config = { type: "custom:vacuum-queue-card" };
+        for (const [k, v] of Object.entries(ev.detail.value)) {
+          if (v === undefined || v === "") continue;
+          if (k in this._config || v !== DEFAULTS[k]) config[k] = v;
+        }
         this.dispatchEvent(new CustomEvent("config-changed", {
           detail: { config }, bubbles: true, composed: true,
         }));
@@ -1303,7 +1502,7 @@ class VacuumQueueCardEditor extends HTMLElement {
     }
     if (this._hass) this._form.hass = this._hass;
     this._form.schema = EDITOR_SCHEMA;
-    this._form.data = this._config;
+    this._form.data = { ...DEFAULTS, ...this._config };
   }
 }
 

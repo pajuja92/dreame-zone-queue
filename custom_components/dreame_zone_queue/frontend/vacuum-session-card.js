@@ -12,10 +12,16 @@
  *   layout: right | below         (opcjonalnie — mapa po prawej / pod listą)
  *
  * Dane: GET /api/dreame_zone_queue/history (sessions + current)
- *       GET /api/dreame_zone_queue/map_calib (przelicznik mm→px do mapki).
+ *       przelicznik mm→px: calibration_points kamery mapy, zapasowo
+ *       GET /api/dreame_zone_queue/map_calib (ręczna kalibracja).
  */
 
-import { TIME_CSS, breakdownHtml } from "./dzq-time.js";
+// ?v= z adresu karty przechodzi na moduly pomocnicze — inaczej Cloudflare i przegladarka
+// trzymaja stary plik do 4 h (max-age=14400) i karta laduje sie z nieaktualnym helperem.
+const { TIME_CSS, breakdownHtml, esc, errMsg, mapCamera } =
+  await import(`./dzq-common.js${new URL(import.meta.url).search}`);
+const { calibFromCamera, mmToPx } =
+  await import(`./dzq-draw.js${new URL(import.meta.url).search}`);
 
 const OUT = {
   done:      { label: "✓ posprzątany", color: "#2ecc71" },
@@ -51,6 +57,9 @@ class VacuumSessionCard extends HTMLElement {
     }
     const now = Date.now();
     if (!this._lastFetch || now - this._lastFetch > 30000) this._fetch();
+    // po restarcie HA calibration_points kamery pojawia sie dopiero po
+    // pobraniu obrazka mapy — dorysuj strefy, gdy atrybut przyjdzie
+    else if (this._noCalib && this._calibNow()) this._drawZones();
   }
 
   getCardSize() {
@@ -75,14 +84,24 @@ class VacuumSessionCard extends HTMLElement {
       this._vac = mc.vacuum_entity || "";
       this._error = null;
     } catch (e) {
-      this._error = String(e);
+      this._error = errMsg(e);
     }
     if (this._idx >= (this._sessions || []).length) this._idx = 0;
+    // bez zmian w danych nie przebudowuj DOM (zamykaloby otwarty select)
+    const sig = JSON.stringify([this._sessions, this._current, this._calib, this._vac, this._error]);
+    if (sig === this._sig) return;
+    this._sig = sig;
     this._render();
   }
 
-  _esc(s) {
-    return String(s).replace(/&/g, "&amp;").replace(/</g, "&lt;");
+  _camEnt() {
+    return mapCamera(this._config, this._vac);
+  }
+
+  /* przelicznik z kamery (aktualny dla kazdego renderu mapy), reczny jako zapas */
+  _calibNow() {
+    const cam = this._hass && this._hass.states[this._camEnt()];
+    return (cam && calibFromCamera(cam.attributes.calibration_points)) || this._calib;
   }
 
   /* przebiegi wybranej sesji + żywy wpis aktywnego pokoju (otwarta sesja) */
@@ -96,13 +115,13 @@ class VacuumSessionCard extends HTMLElement {
 
   _render() {
     if (!this.shadowRoot) return;
-    const title = this._esc(this._config.title || "Historia kolejek");
+    const title = esc(this._config.title || "Historia kolejek");
     const sessions = this._sessions || [];
     const sess = sessions[this._idx];
 
     let body;
     if (this._error) {
-      body = `<div class="empty">Błąd pobierania: ${this._esc(this._error)}</div>`;
+      body = `<div class="empty">Błąd pobierania: ${esc(this._error)}</div>`;
     } else if (!sessions.length) {
       body = `<div class="empty">Brak zapisanych kolejek — raport powstaje
         przy każdym starcie kolejki od tej wersji.</div>`;
@@ -120,7 +139,7 @@ class VacuumSessionCard extends HTMLElement {
     const compact = !!this._config.compact;
     const below = this._config.layout === "below";
     const widthCss = this._config.width
-      ? `max-width: ${this._esc(this._config.width)}; margin: 0 auto;` : "";
+      ? `max-width: ${esc(this._config.width)}; margin: 0 auto;` : "";
     this.shadowRoot.innerHTML = `
       <style>
         ha-card { padding: ${compact ? "10px 12px 12px" : "14px 16px 16px"};
@@ -143,6 +162,7 @@ class VacuumSessionCard extends HTMLElement {
         .list { flex: 1; min-width: ${below ? "0" : "230px"}; }
         .maps { flex: 1.3; min-width: ${below ? "0" : "260px"};
                position: relative; line-height: 0; }
+        .mbox { position: relative; }
         .maps img { width: 100%; border-radius: 10px; display: block; }
         .maps svg { position: absolute; inset: 0; width: 100%; height: 100%; }
         table { width: 100%; border-collapse: collapse;
@@ -223,7 +243,7 @@ class VacuumSessionCard extends HTMLElement {
     ].filter(Boolean).join("");
     const live = open
       ? `<div class="live">▶ Kolejka w trakcie (od ${fmtT(open.started)})` +
-        (this._current ? ` — sprząta: <b>${this._esc(this._current.room)}</b>` : "") +
+        (this._current ? ` — sprząta: <b>${esc(this._current.room)}</b>` : "") +
         `${this._idx !== sessions.indexOf(open) && sessions.indexOf(open) >= 0
           ? ` · <a href="#" id="golive">pokaż</a>` : ""}</div>`
       : "";
@@ -235,7 +255,7 @@ class VacuumSessionCard extends HTMLElement {
     const when = `${fmtD(sess.started)} ${fmtT(sess.started)}` +
       (sess.ended != null ? ` – ${fmtT(sess.ended)}` : " · w trakcie");
     const rows = runs.map((run, i) => {
-      const o = OUT[run.outcome] || { label: run.outcome, color: "inherit" };
+      const o = OUT[run.outcome] || { label: esc(run.outcome), color: "inherit" };
       const details = [
         run.pct != null ? `${run.pct}%` : null,
         fmtMin(run.dur),
@@ -244,7 +264,7 @@ class VacuumSessionCard extends HTMLElement {
       ].filter(Boolean).join(" · ");
       return `<tr>
         <td class="num">${i + 1}</td>
-        <td><b>${this._esc(run.room)}</b><br><span class="sub">${details}</span></td>
+        <td><b>${esc(run.room)}</b><br><span class="sub">${details}</span></td>
         <td class="st" style="color:${o.color}">${o.label}</td>
       </tr>`;
     }).join("");
@@ -253,20 +273,21 @@ class VacuumSessionCard extends HTMLElement {
       (sess.ended != null && runs.length
         ? ` · łącznie ${fmtMin(sess.ended - sess.started)}` : "");
 
-    const camEnt = this._config.map_camera
-      || ("camera." + ((this._vac || "").split(".")[1] || "") + "_map");
+    const camEnt = this._camEnt();
     const cam = this._hass && this._hass.states[camEnt];
     let map;
     if (!cam) {
-      map = `<div class="nomap">Brak kamery mapy (<b>${this._esc(camEnt)}</b>) —
+      map = `<div class="nomap">Brak kamery mapy (<b>${esc(camEnt)}</b>) —
         ustaw <b>map_camera</b> w konfiguracji karty, aby zobaczyć strefy
         na mapie.</div>`;
-    } else if (!this._calib) {
-      map = `<div class="nomap">Brak kalibracji mapy — zrób ją raz w panelu
-        <b>Zone Queue → 🎯 Kalibracja mapy</b>, a strefy pojawią się na mapie.</div>`;
     } else {
-      map = `<img src="${cam.attributes.entity_picture || ""}" draggable="false">
-        <svg></svg>`;
+      // obrazek zawsze — jego pobranie wyzwala calibration_points po restarcie HA
+      map = `<div class="mbox"><img src="${esc(cam.attributes.entity_picture || "")}"
+        draggable="false"><svg></svg></div>
+        <div class="nomap nocalib" style="display:none">Brak kalibracji mapy —
+        kamera robota nie podała jeszcze <code>calibration_points</code>. Jeśli
+        strefy się nie pojawią, skalibruj mapę ręcznie: karta kolejki →
+        <b>▭ Własna strefa</b> (albo opcje integracji → <b>Kalibracja mapy</b>).</div>`;
     }
     return `
       <div class="cols">
@@ -287,14 +308,18 @@ class VacuumSessionCard extends HTMLElement {
     const r = this.shadowRoot;
     const img = r.querySelector(".maps img");
     const svg = r.querySelector(".maps svg");
-    const c = this._calib;
+    const c = this._calibNow();
     const sessions = this._sessions || [];
     const sess = sessions[this._idx];
+    this._noCalib = !!img && !c;
+    const msg = r.querySelector(".nocalib");
+    if (msg) msg.style.display = this._noCalib && img.naturalWidth ? "" : "none";
     if (!img || !svg || !c || !sess || !img.naturalWidth) return;
     svg.setAttribute("viewBox", `0 0 ${img.naturalWidth} ${img.naturalHeight}`);
-    const stale = c.iw && Math.abs(c.iw - img.naturalWidth) > 1;
+    // ostrzezenie tylko dla recznej kalibracji — kamera liczy przelicznik per render
+    const stale = c.src !== "camera" && c.iw && Math.abs(c.iw - img.naturalWidth) > 1;
     const runs = this._runs(sess, this._idx === 0);
-    const toPx = (mx, my) => [(mx - c.bx) / c.ax, (my - c.by) / c.ay];
+    const toPx = mmToPx(c);
     const sw = Math.max(2, img.naturalWidth / 400);
     const fs = Math.max(12, img.naturalWidth / 45);
     let html = "";
@@ -366,7 +391,7 @@ class VacuumSessionCardEditor extends HTMLElement {
       <div class="row">
         <div>
           <label class="f">Tytuł karty</label>
-          <input type="text" id="title" value="${(c.title || "").replace(/"/g, "&quot;")}">
+          <input type="text" id="title" value="${esc(c.title || "")}">
         </div>
         <div>
           <label class="f">Maks. szerokość karty</label>
@@ -391,7 +416,7 @@ class VacuumSessionCardEditor extends HTMLElement {
         <div>
           <label class="f">Kamera mapy (puste = automatycznie)</label>
           <input type="text" id="cam" placeholder="camera.robot_map"
-            value="${(c.map_camera || "").replace(/"/g, "&quot;")}">
+            value="${esc(c.map_camera || "")}">
         </div>
         <label class="chk"><input type="checkbox" id="compact"
           ${c.compact ? "checked" : ""}> Tryb kompaktowy</label>

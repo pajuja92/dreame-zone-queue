@@ -1,7 +1,23 @@
-/* „Gdzie poszedł czas" — pasek podziału czasu kolejki (dane: breakdown
- * z backendu, sekundy). Wspólny dla karty historii kolejek i karty
- * diagnostyki. Postój kolejki (idle) jest pokazywany osobno i nie wchodzi
- * do paska — to czas, gdy nikt nie kazał robotowi sprzątać. */
+/* Wspólne helpery kart i panelu Zone Queue (escapowanie, komunikaty błędów,
+ * kamera mapy) + „Gdzie poszedł czas" — pasek podziału czasu kolejki (dane:
+ * breakdown z backendu, sekundy). Postój kolejki (idle) jest pokazywany
+ * osobno i nie wchodzi do paska — to czas, gdy nikt nie kazał robotowi sprzątać. */
+
+// ponytail: duplikaty do późniejszego sprzątania — fmtMin/fmtDur/fmtD/fmtT
+// (queue/session/stats/tu) oraz etykiety wyników/ssania/mopa (OUT/OUTCOME_PL,
+// T_SUCTION/SUCTION_PL/SUCTION, T_WATER/WATER_PL) w każdej karcie osobno.
+
+// tekst z danych/stanu/użytkownika -> bezpieczny w innerHTML i w atrybutach
+export const esc = (s) => String(s ?? "").replace(/&/g, "&amp;").replace(/</g, "&lt;")
+  .replace(/>/g, "&gt;").replace(/"/g, "&quot;").replace(/'/g, "&#39;");
+
+// hass.callApi odrzuca zwykłym obiektem {error, status_code, body} — bez tego "[object Object]"
+export const errMsg = (e) =>
+  e?.body?.message || e?.body?.error || e?.message || e?.error || String(e);
+
+// kamera mapy: config.map_camera albo camera.<object_id odkurzacza>_map
+export const mapCamera = (config, vacuumEntity) => (config && config.map_camera)
+  || ("camera." + ((vacuumEntity || "").split(".")[1] || "") + "_map");
 
 export const TIME_PARTS = [
   ["cleaning", "sprzątanie", "#2ecc71"],

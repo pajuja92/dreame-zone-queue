@@ -1,5 +1,5 @@
 /* Wspólny widget rysowania po mapie — używany przez modal „Własna strefa"
- * (karta kolejki) i zakładkę „Kalibracja mapy" (panel Zone Queue).
+ * (karta kolejki, także jego faza ręcznej kalibracji mapy).
  *
  *  · prostokąt: przeciągnięcie jednym palcem / myszą,
  *  · wielokąt: dodawanie punktów tapnięciami (min. 3), finish() kończy,
@@ -15,6 +15,7 @@
  *  cb.shape({kind:"rect"|"poly", pts})  — zamknięty kształt
  *  cb.progress(n)                       — liczba punktów wielokąta
  *  cb.hover([x,y]|null)                 — pozycja kursora (weryfikacja)
+ *  cb.underlay(scale) -> svg markup     — tło pod szkicem (np. poprzednia kalibracja)
  */
 
 export function attachDraw(zwrap, img, svg, cb) {
@@ -62,7 +63,7 @@ export function attachDraw(zwrap, img, svg, cb) {
 
   function redraw() {
     const sw = 2 / st.scale, r = 7 / st.scale;
-    let html = "";
+    let html = cb.underlay ? cb.underlay(st.scale) : "";
     if (st.drag) {
       html += `<rect x="${st.drag[0]}" y="${st.drag[1]}" width="${st.drag[2]}"
         height="${st.drag[3]}" fill="rgba(255,184,77,.18)" stroke="#ffb84d"
@@ -182,7 +183,58 @@ export function attachDraw(zwrap, img, svg, cb) {
       return true;
     },
     pointCount: () => st.pts.length,
+    redraw,
   };
+}
+
+/* Przelicznik px->mm z atrybutu `calibration_points` kamery mapy Dreame
+ * (3 pary {vacuum:{x,y}, map:{x,y}}). Integracja dreame liczy je dla KAŻDEGO
+ * renderu mapy, więc zmiana rozmiaru/przycięcia obrazka nie psuje stref —
+ * ręczna kalibracja zostaje tylko jako zapas, gdy atrybutu brak.
+ * Zwraca afiniczne {ax, axy, bx, ayx, ay, by} (Cramer na 3 punktach) albo null.
+ *   x_mm = ax*nx + axy*ny + bx ;  y_mm = ayx*nx + ay*ny + by */
+export function calibFromCamera(cp) {
+  if (!Array.isArray(cp) || cp.length < 3) return null;
+  const P = cp.slice(0, 3).map((p) =>
+    [p.map.x, p.map.y, p.vacuum.x, p.vacuum.y].map(Number));
+  if (P.some((p) => p.some((v) => !Number.isFinite(v)))) return null;
+  const [[x1, y1], [x2, y2], [x3, y3]] = P;
+  const D = x1 * (y2 - y3) - y1 * (x2 - x3) + (x2 * y3 - x3 * y2);
+  if (!D) return null;
+  const solve = (k) => {
+    const [v1, v2, v3] = P.map((p) => p[k]);
+    return [
+      (v1 * (y2 - y3) - y1 * (v2 - v3) + (v2 * y3 - v3 * y2)) / D,
+      (x1 * (v2 - v3) - v1 * (x2 - x3) + (x2 * v3 - x3 * v2)) / D,
+      (x1 * (y2 * v3 - y3 * v2) - y1 * (x2 * v3 - x3 * v2) + v1 * (x2 * y3 - x3 * y2)) / D,
+    ];
+  };
+  const [ax, axy, bx] = solve(2);
+  const [ayx, ay, by] = solve(3);
+  return { ax, axy, bx, ayx, ay, by, src: "camera" };
+}
+
+/* Odwrotność przelicznika (kamera albo ręczny map_calib): mm -> naturalne px
+ * obrazu mapy. Ręczna kalibracja nie ma axy/ayx (brak obrotu) -> 0. */
+export function mmToPx(c) {
+  const axy = c.axy || 0, ayx = c.ayx || 0;
+  const det = c.ax * c.ay - axy * ayx;
+  return (x, y) => {
+    const dx = x - c.bx, dy = y - c.by;
+    return [(c.ay * dx - axy * dy) / det, (c.ax * dy - ayx * dx) / det];
+  };
+}
+
+/* Pokój, w którym leży strefa [x1,y1,x2,y2] (mm): największa część wspólna
+ * ze strefami pokoi {nazwa: [x1,y1,x2,y2]}. Brak pokrycia -> "". */
+export function roomOf(zone, roomZones) {
+  let best = "", bestA = 0;
+  for (const [name, r] of Object.entries(roomZones || {})) {
+    const w = Math.min(zone[2], Math.max(r[0], r[2])) - Math.max(zone[0], Math.min(r[0], r[2]));
+    const h = Math.min(zone[3], Math.max(r[1], r[3])) - Math.max(zone[1], Math.min(r[1], r[3]));
+    if (w > 0 && h > 0 && w * h > bestA) { best = name; bestA = w * h; }
+  }
+  return best;
 }
 
 /* Domyślny tryb: na ekranach dotykowych punkty (tapnięcia są łatwiejsze

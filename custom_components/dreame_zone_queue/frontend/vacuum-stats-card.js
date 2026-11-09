@@ -15,6 +15,11 @@
  * > domyślne.
  */
 
+// ?v= z adresu karty przechodzi na moduly pomocnicze — inaczej Cloudflare i przegladarka
+// trzymaja stary plik do 4 h (max-age=14400) i karta laduje sie z nieaktualnym helperem.
+const { esc, errMsg } =
+  await import(`./dzq-common.js${new URL(import.meta.url).search}`);
+
 const SUCTION_PL = { off: "—", quiet: "Cichy", silent: "Cichy",
   standard: "Standard", strong: "Mocny", turbo: "Turbo" };
 const WATER_PL = { off: "—", slightly_dry: "Lekko wilg.", moist: "Wilgotny",
@@ -129,8 +134,12 @@ class VacuumStatsCard extends HTMLElement {
       this._current = data.current || null;
       this._error = null;
     } catch (e) {
-      this._error = String(e);
+      this._error = errMsg(e);
     }
+    // bez zmian w danych nie przebudowuj DOM (zamykaloby ⚙ i otwarte selecty)
+    const sig = JSON.stringify([this._history, this._rooms, this._current, this._error]);
+    if (sig === this._sig) return;
+    this._sig = sig;
     this._render();
   }
 
@@ -181,20 +190,16 @@ class VacuumStatsCard extends HTMLElement {
     return s;
   }
 
-  _esc(str) {
-    return String(str).replace(/&/g, "&amp;").replace(/</g, "&lt;");
-  }
-
   _render() {
     if (!this.shadowRoot) return;
-    const title = this._esc(this._config.title || "Statystyki sprzątania");
+    const title = esc(this._config.title || "Statystyki sprzątania");
     const chips = MODE_FILTERS.map(([k, lab]) =>
       `<button class="chip ${this._mode === k ? "on" : ""}" data-mode="${k}">${lab}</button>`
     ).join("");
 
     let body;
     if (this._error) {
-      body = `<div class="empty">Błąd pobierania historii: ${this._esc(this._error)}</div>`;
+      body = `<div class="empty">Błąd pobierania historii: ${esc(this._error)}</div>`;
     } else if (this._room) {
       body = this._detailHtml(this._room);
     } else {
@@ -202,7 +207,7 @@ class VacuumStatsCard extends HTMLElement {
     }
 
     const widthCss = this._config.width
-      ? `max-width: ${this._esc(this._config.width)}; margin: 0 auto;` : "";
+      ? `max-width: ${esc(this._config.width)}; margin: 0 auto;` : "";
     const compact = !!this._config.compact;
     this.shadowRoot.innerHTML = `
       <style>
@@ -252,7 +257,7 @@ class VacuumStatsCard extends HTMLElement {
       <ha-card>
         <div class="hdr">
           ${this._room
-            ? `<button class="back" id="back">‹ Pokoje</button><h2>${this._esc(this._room)}</h2>`
+            ? `<button class="back" id="back">‹ Pokoje</button><h2>${esc(this._room)}</h2>`
             : `<h2>${title}</h2>`}
           ${chips}
           <button class="gear" id="gear" title="wybór kolumn">⚙</button>
@@ -285,9 +290,9 @@ class VacuumStatsCard extends HTMLElement {
       `<th>${OVERVIEW_COLS[c].label}</th>`).join("")}</tr>`;
     const rows = rooms.map((room) => {
       const s = this._roomStats(room);
-      return `<tr class="room" data-room="${this._esc(room)}">
-        <td class="name">${this._esc(room)} ›</td>
-        ${cols.map((c) => `<td>${OVERVIEW_COLS[c].val(s)}</td>`).join("")}</tr>`;
+      return `<tr class="room" data-room="${esc(room)}">
+        <td class="name">${esc(room)} ›</td>
+        ${cols.map((c) => `<td>${esc(OVERVIEW_COLS[c].val(s))}</td>`).join("")}</tr>`;
     }).join("");
     return `<div class="tblwrap"><table>${head}${rows}</table></div>
       <div class="muted">Kliknij pokój, aby zobaczyć wszystkie sprzątania.</div>`;
@@ -303,8 +308,8 @@ class VacuumStatsCard extends HTMLElement {
     const head = `<tr>${cols.map((c) =>
       `<th>${DETAIL_COLS[c].label}</th>`).join("")}</tr>`;
     const rows = runs.map((r) => `<tr>${cols.map((c) => {
-      const cls = c === "outcome" ? ` class="out-${r.outcome}"` : "";
-      return `<td${cls}>${DETAIL_COLS[c].val(r)}</td>`;
+      const cls = c === "outcome" ? ` class="out-${esc(r.outcome)}"` : "";
+      return `<td${cls}>${esc(DETAIL_COLS[c].val(r))}</td>`;
     }).join("")}</tr>`).join("");
     return `<div class="tblwrap"><table>${head}${rows}</table></div>
       <div class="muted">${runs.length} przebiegów (max 100 na pokój).</div>`;
@@ -397,7 +402,7 @@ class VacuumStatsCardEditor extends HTMLElement {
       <div class="row">
         <div>
           <label class="f">Tytuł karty</label>
-          <input type="text" id="title" value="${(c.title || "").replace(/"/g, "&quot;")}">
+          <input type="text" id="title" value="${esc(c.title || "")}">
         </div>
         <div>
           <label class="f">Maks. szerokość karty</label>

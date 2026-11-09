@@ -17,7 +17,12 @@
  *
  * Dane: GET /api/dreame_zone_queue/insights
  */
-import { TIME_CSS, breakdownHtml, fmtDur } from "./dzq-time.js";
+// ?v= z adresu karty przechodzi na moduly pomocnicze — inaczej Cloudflare i przegladarka
+// trzymaja stary plik do 4 h (max-age=14400) i karta laduje sie z nieaktualnym helperem.
+const { TIME_CSS, breakdownHtml, fmtDur, esc, errMsg, mapCamera } =
+  await import(`./dzq-common.js${new URL(import.meta.url).search}`);
+const { calibFromCamera, mmToPx } =
+  await import(`./dzq-draw.js${new URL(import.meta.url).search}`);
 
 const KIND = {
   error: { label: "błąd", color: "#e74c3c" },
@@ -37,6 +42,10 @@ const HEAT_KIND = {
             about: "Miejsca, w których robot zjeżdża z pasa zygzaka i wraca na niego — omija przeszkodę (krzesło, zabawka, kabel). Stałe meble też tu wyjdą; nowe plamki to rzeczy na podłodze." },
 };
 const HEAT_CELL = 4;  // px obrazu mapy na komórkę siatki heatmapy
+const NOCALIB = `<div class="nomap nocalib" style="display:none;margin-top:6px">Brak kalibracji
+  mapy — kamera robota nie podała jeszcze <code>calibration_points</code>. Jeśli się
+  nie pojawią, skalibruj mapę ręcznie: karta kolejki → <b>▭ Własna strefa</b>
+  (albo opcje integracji → <b>Kalibracja mapy</b>).</div>`;
 const REC_ICON = {
   manual: "🧹", problem_room: "⚠️", hotspot: "📍", suction: "🌀",
   battery: "🔋", time: "⏱️", consumables: "🔧",
@@ -50,6 +59,7 @@ class VacuumInsightsCard extends HTMLElement {
   setConfig(config) {
     this._config = config || {};
     this._days = Number(this._config.days) || 30;
+    this._sig = null;  // nowa konfiguracja = render nawet przy tych samych danych
     if (this._built) this._fetch();
   }
 
@@ -61,6 +71,9 @@ class VacuumInsightsCard extends HTMLElement {
       this._render();
     }
     if (!this._lastFetch || Date.now() - this._lastFetch > 120000) this._fetch();
+    // po restarcie HA calibration_points kamery pojawia sie dopiero po
+    // pobraniu obrazka mapy — dorysuj, gdy atrybut przyjdzie
+    else if (this._noCalib && this._calibNow()) { this._drawHotspots(); this._drawHeat(); }
   }
 
   getCardSize() {
@@ -81,25 +94,25 @@ class VacuumInsightsCard extends HTMLElement {
       this._data = await this._hass.callApi("get", `dreame_zone_queue/insights?${q}`);
       this._error = null;
     } catch (e) {
-      this._error = String(e);
+      this._error = errMsg(e);
     }
+    // bez zmian w danych nie przebudowuj DOM (zamykaloby otwarty select)
+    const sig = JSON.stringify([this._data, this._error, this._days]);
+    if (sig === this._sig) return;
+    this._sig = sig;
     this._render();
-  }
-
-  _esc(s) {
-    return String(s ?? "").replace(/&/g, "&amp;").replace(/</g, "&lt;");
   }
 
   _render() {
     if (!this.shadowRoot) return;
     const d = this._data;
-    const title = this._esc(this._config.title || "Diagnostyka robota");
+    const title = esc(this._config.title || "Diagnostyka robota");
     let body;
-    if (this._error) body = `<div class="empty">Błąd pobierania: ${this._esc(this._error)}</div>`;
+    if (this._error) body = `<div class="empty">Błąd pobierania: ${esc(this._error)}</div>`;
     else if (!d) body = `<div class="empty">Ładowanie…</div>`;
     else body = this._summary(d) + this._mapHtml(d) + this._heatHtml(d) + this._recsHtml(d)
       + this._timeHtml(d) + this._effHtml(d);
-    const days = [7, 30, 90].map((n) =>
+    const days = [...new Set([7, 30, 90, this._days])].sort((a, b) => a - b).map((n) =>
       `<option value="${n}" ${n === this._days ? "selected" : ""}>${n} dni</option>`).join("");
     this.shadowRoot.innerHTML = `
       <style>
@@ -179,9 +192,29 @@ class VacuumInsightsCard extends HTMLElement {
   }
 
   _camera(d) {
-    const ent = this._config.map_camera
-      || ("camera." + ((d.vacuum_entity || "").split(".")[1] || "") + "_map");
+    const ent = mapCamera(this._config, d.vacuum_entity);
     return [ent, this._hass && this._hass.states[ent]];
+  }
+
+  /* przelicznik z kamery (aktualny dla kazdego renderu mapy), reczny jako zapas */
+  _calibNow() {
+    const d = this._data;
+    if (!d) return null;
+    const cam = this._camera(d)[1];
+    return (cam && calibFromCamera(cam.attributes.calibration_points)) || d.calib || null;
+  }
+
+  /* brak przelicznika: mapa i tak sie laduje (wyzwala calibration_points),
+   * komunikat pokazany dopiero po zaladowaniu obrazka */
+  _calibState() {
+    const r = this.shadowRoot;
+    const c = this._calibNow();
+    this._noCalib = !c;
+    for (const m of r.querySelectorAll(".nocalib")) {
+      const img = m.previousElementSibling.querySelector("img");
+      m.style.display = !c && img && img.naturalWidth ? "" : "none";
+    }
+    return c;
   }
 
   _mapHtml(d) {
@@ -191,20 +224,19 @@ class VacuumInsightsCard extends HTMLElement {
       map = `<div class="nomap">Brak zapisanych problemów z pozycją robota w tym
         okresie. Pozycja jest zapisywana przy każdym błędzie, utknięciu i ręcznym
         zatrzymaniu (od wersji 2.0.0-beta.23).</div>`;
-    } else if (!cam || !d.calib) {
-      map = `<div class="nomap">${!cam ? `Brak kamery mapy <b>${this._esc(camEnt)}</b> — ustaw
-        <b>map_camera</b>.` : "Brak kalibracji mapy — zrób ją w panelu <b>Zone Queue</b>."}
-        Miejsca problemów są niżej jako lista.</div>`;
+    } else if (!cam) {
+      map = `<div class="nomap">Brak kamery mapy <b>${esc(camEnt)}</b> — ustaw
+        <b>map_camera</b>. Miejsca problemów są niżej jako lista.</div>`;
     } else {
-      map = `<div class="map"><img src="${cam.attributes.entity_picture || ""}"
-        draggable="false"><svg></svg></div>`;
+      map = `<div class="map"><img src="${esc(cam.attributes.entity_picture || "")}"
+        draggable="false"><svg></svg></div>${NOCALIB}`;
     }
     const list = d.hotspots.slice(0, 8).map((h, i) => {
       const k = KIND[Object.entries(h.kinds).sort((a, b) => b[1] - a[1])[0][0]] || KIND.error;
-      const why = h.reasons.map(([r, n]) => `${this._esc(r)} ×${n}`).join(", ");
+      const why = h.reasons.map(([r, n]) => `${esc(r)} ×${n}`).join(", ");
       return `<li><span class="dot" style="background:${k.color}">${i + 1}</span>
-        <span><b>${this._esc(h.room || "?")}</b> — ${h.n}× · ${why}<br>
-        <span class="sub">${this._esc(h.hint)} · ostatnio
+        <span><b>${esc(h.room || "?")}</b> — ${h.n}× · ${why}<br>
+        <span class="sub">${esc(h.hint)} · ostatnio
         ${new Date(h.last * 1000).toLocaleDateString("pl-PL")}</span></span></li>`;
     }).join("");
     return `<h3>📍 Gdzie robot ma problemy</h3>${map}${list ? `<ul class="hs">${list}</ul>` : ""}`;
@@ -215,10 +247,10 @@ class VacuumInsightsCard extends HTMLElement {
     const r = this.shadowRoot;
     const img = r && r.querySelector(".map:not(.heat) img");
     const svg = r && r.querySelector(".map svg");
-    const c = this._data && this._data.calib;
+    const c = r && this._calibState();
     if (!img || !svg || !c || !img.naturalWidth) return;
     svg.setAttribute("viewBox", `0 0 ${img.naturalWidth} ${img.naturalHeight}`);
-    const toPx = (mx, my) => [(mx - c.bx) / c.ax, (my - c.by) / c.ay];
+    const toPx = mmToPx(c);
     const unit = img.naturalWidth / 60;
     const spots = this._data.hotspots.slice(0, 8);
     const maxN = Math.max(...spots.map((h) => h.n));
@@ -243,15 +275,15 @@ class VacuumInsightsCard extends HTMLElement {
       `<button data-heat="${key}" class="${key === kind ? "on" : ""}">${v.label}
         <span>${(d[v.field] || []).length}</span></button>`).join("");
     const h = `<h3>🔥 Heatmapa — gdzie utyka i zbacza z toru</h3><div class="seg">${tabs}</div>`;
-    if (!cam || !d.calib) {
-      return `${h}<div class="nomap">${!cam ? `Brak kamery mapy <b>${this._esc(camEnt)}</b> — ustaw
-        <b>map_camera</b>.` : "Brak kalibracji mapy — zrób ją w panelu <b>Zone Queue</b>."}</div>`;
+    if (!cam) {
+      return `${h}<div class="nomap">Brak kamery mapy <b>${esc(camEnt)}</b> — ustaw
+        <b>map_camera</b>.</div>`;
     }
     const leg = n
       ? `<span>rzadko</span><i></i><span>${k.red}</span>`
       : `<span>${k.empty}</span>`;
-    return `${h}<div class="map heat"><img src="${cam.attributes.entity_picture || ""}"
-        draggable="false"><canvas></canvas></div><div class="hleg">${leg}</div>
+    return `${h}<div class="map heat"><img src="${esc(cam.attributes.entity_picture || "")}"
+        draggable="false"><canvas></canvas></div>${NOCALIB}<div class="hleg">${leg}</div>
       <div class="sub">${k.about}</div>`;
   }
 
@@ -263,15 +295,17 @@ class VacuumInsightsCard extends HTMLElement {
     const r = this.shadowRoot;
     const img = r && r.querySelector(".heat img");
     const cv = r && r.querySelector(".heat canvas");
-    const c = this._data && this._data.calib;
+    const c = r && this._calibState();
     if (!img || !cv || !c || !img.naturalWidth) return;
     const k = HEAT_KIND[this._heatKind] || HEAT_KIND.stuck;
     const gw = Math.ceil(img.naturalWidth / HEAT_CELL);
     const gh = Math.ceil(img.naturalHeight / HEAT_CELL);
     const R = gw / 22;  // promień plamki ~ 4,5% szerokości mapy
     const grid = new Float32Array(gw * gh);
+    const toPx = mmToPx(c);
     for (const [mx, my] of this._data[k.field] || []) {
-      const cx = (mx - c.bx) / c.ax / HEAT_CELL, cy = (my - c.by) / c.ay / HEAT_CELL;
+      const [px, py] = toPx(mx, my);
+      const cx = px / HEAT_CELL, cy = py / HEAT_CELL;
       for (let y = Math.max(0, Math.ceil(cy - R)); y <= Math.min(gh - 1, cy + R); y++) {
         for (let x = Math.max(0, Math.ceil(cx - R)); x <= Math.min(gw - 1, cx + R); x++) {
           const d2 = ((x - cx) ** 2 + (y - cy) ** 2) / (R * R);
@@ -305,7 +339,7 @@ class VacuumInsightsCard extends HTMLElement {
     if (!d.recommendations.length) return "";
     const items = d.recommendations.map((rec) => `<div class="rec">
       <div class="ic">${REC_ICON[rec.kind] || "💡"}</div>
-      <div><b>${this._esc(rec.title)}</b><span>${this._esc(rec.text)}</span></div></div>`).join("");
+      <div><b>${esc(rec.title)}</b><span>${esc(rec.text)}</span></div></div>`).join("");
     return `<h3>💡 Rekomendacje</h3>${items}`;
   }
 
@@ -318,8 +352,8 @@ class VacuumInsightsCard extends HTMLElement {
     const rows = d.efficiency.filter((e) => e.runs >= 2).map((e) => {
       const bat = e.bat_pct == null ? "—" : `${e.bat_src === "estimated" ? "~" : ""}${e.bat_pct}%`;
       return `<tr>
-        <td><b>${this._esc(e.room)}</b></td>
-        <td>${MODE[e.mode] || e.mode}${e.mode !== "mopping" ? ` · ${SUCTION[e.suction] || e.suction}` : ""}</td>
+        <td><b>${esc(e.room)}</b></td>
+        <td>${esc(MODE[e.mode] || e.mode)}${e.mode !== "mopping" ? ` · ${esc(SUCTION[e.suction] || e.suction)}` : ""}</td>
         <td>${e.done}/${e.runs}</td>
         <td class="${e.problem_rate >= 0.3 ? "bad" : ""}">${Math.round(e.problem_rate * 100)}%</td>
         <td>${e.active_min ?? "—"}</td>
