@@ -8,7 +8,7 @@ from pathlib import Path
 
 import voluptuous as vol
 
-from homeassistant.config_entries import ConfigEntry
+from homeassistant.config_entries import ConfigEntry, ConfigEntryState
 from homeassistant.core import HomeAssistant, ServiceCall, SupportsResponse
 from homeassistant.exceptions import ServiceValidationError
 from homeassistant.helpers import config_validation as cv
@@ -47,6 +47,9 @@ from .rooms import rooms_to_yaml, validate_rooms
 
 _LOGGER = logging.getLogger(__name__)
 PLATFORMS = ["sensor", "button", "switch"]
+CONFIG_SCHEMA = cv.config_entry_only_config_schema(DOMAIN)
+
+type DzqConfigEntry = ConfigEntry[QueueManager]
 
 SCHEMA_ADD = vol.Schema(
     {
@@ -87,6 +90,9 @@ def _feedback_view_cls():
 
         async def get(self, request):
             hass = request.app["hass"]
+            user = request.get("hass_user")
+            if user is not None and not user.is_admin:
+                return self.json({"error": "admin only"}, status_code=403)
             path = hass.config.path(FEEDBACK_LOG)
             want_all = request.query.get("all") == "1"
 
@@ -248,61 +254,54 @@ def _map_calib_view_cls():
 
 async def _register_feedback_panel(hass: HomeAssistant) -> None:
     """Osobna pozycja w menu bocznym z podgladem dziennika feedbacku."""
-    if hass.data[DOMAIN].get("_panel_registered"):
-        return
     hass.http.register_view(_feedback_view_cls()())
     hass.http.register_view(_archive_view_cls()())
     hass.http.register_view(_history_view_cls()())
     hass.http.register_view(_map_calib_view_cls()())
     hass.http.register_view(_insights_view_cls()())
     try:
-        from homeassistant.components import frontend
+        from homeassistant.components import panel_custom
 
-        frontend.async_register_built_in_panel(
+        await panel_custom.async_register_panel(
             hass,
-            component_name="custom",
+            frontend_url_path="dzq-feedback",
+            webcomponent_name="dzq-feedback-panel",
             sidebar_title="Zone Queue",
             sidebar_icon="mdi:script-text-outline",
-            frontend_url_path="dzq-feedback",
-            config={"_panel_custom": {
-                "name": "dzq-feedback-panel",
-                "module_url": f"{URL_BASE}/dzq-feedback-panel.js?v={VERSION}",
-                "embed_iframe": False,
-            }},
+            module_url=f"{URL_BASE}/dzq-feedback-panel.js?v={VERSION}",
             require_admin=True,
         )
-        hass.data[DOMAIN]["_panel_registered"] = True
     except Exception as err:  # noqa: BLE001
         _LOGGER.warning("Could not register the feedback panel: %s", err)
 
 
 def _get_manager(hass: HomeAssistant) -> QueueManager | None:
-    for data in hass.data.get(DOMAIN, {}).values():
-        if isinstance(data, QueueManager):
-            return data
+    """Manager zaladowanego wpisu (integracja ma jeden wpis)."""
+    for entry in hass.config_entries.async_entries(DOMAIN):
+        if entry.state is ConfigEntryState.LOADED:
+            return entry.runtime_data
     return None
+
+
+def _require_manager(hass: HomeAssistant) -> QueueManager:
+    manager = _get_manager(hass)
+    if manager is None:
+        raise ServiceValidationError(
+            translation_domain=DOMAIN, translation_key="not_loaded")
+    return manager
 
 
 async def _register_frontend(hass: HomeAssistant) -> None:
     """Serve the bundled Lovelace card and try to auto-add it as a resource."""
-    if hass.data.setdefault(DOMAIN, {}).get("_frontend_registered"):
-        return
+    from homeassistant.components.http import StaticPathConfig
+
     card_dir = Path(__file__).parent / "frontend"
-    try:
-        from homeassistant.components.http import StaticPathConfig
-
-        await hass.http.async_register_static_paths(
-            [StaticPathConfig(URL_BASE, str(card_dir), cache_headers=False)]
-        )
-    except ImportError:
-        hass.http.register_static_path(URL_BASE, str(card_dir), cache_headers=False)
-    hass.data[DOMAIN]["_frontend_registered"] = True
+    await hass.http.async_register_static_paths(
+        [StaticPathConfig(URL_BASE, str(card_dir), cache_headers=False)]
+    )
 
     try:
-        lovelace = hass.data.get("lovelace")
-        resources = getattr(lovelace, "resources", None)
-        if resources is None and isinstance(lovelace, dict):
-            resources = lovelace.get("resources")
+        resources = getattr(hass.data.get("lovelace"), "resources", None)
         if resources is None:
             raise RuntimeError("lovelace resources unavailable")
         if not resources.loaded:
@@ -330,42 +329,44 @@ async def _register_frontend(hass: HomeAssistant) -> None:
         )
 
 
-async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
-    manager = QueueManager(hass, entry)
-    await manager.async_setup()
-    hass.data.setdefault(DOMAIN, {})[entry.entry_id] = manager
-
+async def async_setup(hass: HomeAssistant, config: dict) -> bool:
+    """Raz na start HA: uslugi, pliki kart, API i panel (niezalezne od wpisu)."""
+    _register_services(hass)
     await _register_frontend(hass)
     await _register_feedback_panel(hass)
-    await hass.config_entries.async_forward_entry_setups(entry, PLATFORMS)
-    entry.async_on_unload(entry.add_update_listener(_update_listener))
-
-    if not hass.data[DOMAIN].get("_services_registered"):
-        _register_services(hass)
-        hass.data[DOMAIN]["_services_registered"] = True
     return True
 
 
-async def _update_listener(hass: HomeAssistant, entry: ConfigEntry) -> None:
-    await hass.config_entries.async_reload(entry.entry_id)
+async def async_setup_entry(hass: HomeAssistant, entry: DzqConfigEntry) -> bool:
+    manager = QueueManager(hass, entry)
+    await manager.async_setup()
+    entry.runtime_data = manager
+    await hass.config_entries.async_forward_entry_setups(entry, PLATFORMS)
+    entry.async_on_unload(entry.add_update_listener(_update_listener))
+    return True
 
 
-async def async_unload_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
+async def _update_listener(hass: HomeAssistant, entry: DzqConfigEntry) -> None:
+    """Pokoje i ustawienia manager czyta z opcji na biezaco — przeladowanie
+    (ktore zatrzymuje kolejke) tylko przy zmianie sledzonych encji."""
+    manager = entry.runtime_data
+    if manager.listen_keys != (manager.vacuum_entity, manager.task_sensor_entity):
+        await hass.config_entries.async_reload(entry.entry_id)
+    else:
+        manager.async_options_changed()
+
+
+async def async_unload_entry(hass: HomeAssistant, entry: DzqConfigEntry) -> bool:
     unload_ok = await hass.config_entries.async_unload_platforms(entry, PLATFORMS)
     if unload_ok:
-        manager: QueueManager = hass.data[DOMAIN].pop(entry.entry_id)
-        await manager.async_unload()
+        await entry.runtime_data.async_unload()
     return unload_ok
 
 
 def _register_services(hass: HomeAssistant) -> None:
     def wrap(coro_name):
         async def handler(call: ServiceCall) -> None:
-            manager = _get_manager(hass)
-            if manager is None:
-                _LOGGER.error("No configured Dreame Zone Queue instance")
-                return
-            await getattr(manager, coro_name)(**call.data)
+            await getattr(_require_manager(hass), coro_name)(**call.data)
 
         return handler
 
@@ -397,18 +398,14 @@ def _register_services(hass: HomeAssistant) -> None:
 
 
     async def import_rooms(call: ServiceCall) -> None:
-        manager = _get_manager(hass)
-        if manager is None:
-            raise ServiceValidationError("No configured Dreame Zone Queue instance")
+        manager = _require_manager(hass)
         rooms, err = validate_rooms(call.data["rooms"])
         if err:
             raise ServiceValidationError(f"Invalid rooms definition: {err}")
         await manager.async_import_rooms(rooms, call.data.get("mode", "merge"))
 
     async def export_rooms(call: ServiceCall) -> dict:
-        manager = _get_manager(hass)
-        if manager is None:
-            raise ServiceValidationError("No configured Dreame Zone Queue instance")
+        manager = _require_manager(hass)
         rooms = manager.rooms
         return {"rooms": rooms, "yaml": rooms_to_yaml(rooms)}
 
@@ -432,9 +429,7 @@ def _register_services(hass: HomeAssistant) -> None:
     )
 
     async def preset_call(call: ServiceCall, method: str = "") -> None:
-        manager = _get_manager(hass)
-        if manager is None:
-            raise ServiceValidationError("No configured Dreame Zone Queue instance")
+        manager = _require_manager(hass)
         await getattr(manager, method)(**call.data)
 
     hass.services.async_register(
@@ -457,9 +452,7 @@ def _register_services(hass: HomeAssistant) -> None:
     )
 
     async def detect_rooms(call: ServiceCall) -> dict:
-        manager = _get_manager(hass)
-        if manager is None:
-            raise ServiceValidationError("No configured Dreame Zone Queue instance")
+        manager = _require_manager(hass)
         n = await manager.async_detect_rooms(
             call.data.get("mode", "merge"), call.data.get("camera_entity")
         )
@@ -475,9 +468,7 @@ def _register_services(hass: HomeAssistant) -> None:
     )
 
     async def run(call: ServiceCall) -> None:
-        manager = _get_manager(hass)
-        if manager is None:
-            raise ServiceValidationError("No configured Dreame Zone Queue instance")
+        manager = _require_manager(hass)
         await manager.async_run(
             preset=call.data.get("preset"),
             rooms=call.data.get("rooms"),

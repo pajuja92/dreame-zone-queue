@@ -11,11 +11,13 @@
   "integration_type": "service",
   "iot_class": "calculated",
   "dependencies": [
-    "http"
+    "http",
+    "panel_custom"
   ],
   "after_dependencies": [
     "dreame_vacuum",
     "lovelace"
   ],
-  "requirements": []
+  "requirements": [],
+  "single_config_entry": true
 }

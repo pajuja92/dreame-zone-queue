@@ -14,7 +14,7 @@ from .manager import QueueManager
 async def async_setup_entry(
     hass: HomeAssistant, entry: ConfigEntry, async_add_entities: AddEntitiesCallback
 ) -> None:
-    manager: QueueManager = hass.data[DOMAIN][entry.entry_id]
+    manager: QueueManager = entry.runtime_data
     async_add_entities([QueueSensor(manager, entry)])
 
 
@@ -23,6 +23,12 @@ class QueueSensor(SensorEntity):
     _attr_name = None
     _attr_icon = "mdi:playlist-play"
     _attr_should_poll = False
+    # cala kolejka (z torami jazdy), strefy i kalibracja zmieniaja sie przy
+    # kazdej rewizji — recorder zapisywalby je w kolko; w historii zostaje
+    # stan + postep/ETA
+    _unrecorded_attributes = frozenset({
+        "items", "rooms", "room_icons", "room_zones", "map_calib", "presets",
+    })
 
     def __init__(self, manager: QueueManager, entry: ConfigEntry) -> None:
         self._manager = manager

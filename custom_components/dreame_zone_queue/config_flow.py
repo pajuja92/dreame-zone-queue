@@ -22,7 +22,10 @@ from homeassistant.helpers.selector import (
 from .rooms import parse_rooms_yaml, rooms_from_dreame_attrs, rooms_to_yaml
 from .const import (
     CONF_DELAY_BETWEEN_S,
+    CONF_DIRECT_MIN_BATTERY,
+    CONF_DIRECT_NEXT,
     CONF_MODE_SELECT,
+    DEFAULT_DIRECT_MIN_BATTERY,
     CONF_GRACE_S,
     CONF_ROOMS,
     CONF_SUCTION_SELECT,
@@ -88,14 +91,17 @@ def _room_from_input(user_input: dict) -> tuple[str, dict]:
     }
 
 
+_SETTINGS_OPTIONAL = (CONF_TASK_SENSOR, CONF_NOTIFY_SERVICE, CONF_SUCTION_SELECT,
+                      CONF_WATER_SELECT, CONF_MODE_SELECT)
+
+
 class DreameZoneQueueConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
     """Initial setup: pick the vacuum entity."""
 
     VERSION = 1
 
     async def async_step_user(self, user_input: dict[str, Any] | None = None):
-        if self._async_current_entries():
-            return self.async_abort(reason="single_instance_allowed")
+        # jedna instancja: "single_config_entry" w manifest.json
         if user_input is not None:
             return self.async_create_entry(
                 title="Dreame Zone Queue",
@@ -142,11 +148,7 @@ class DreameZoneQueueOptionsFlow(config_entries.OptionsFlow):
         )
 
     def _manager(self):
-        from .manager import QueueManager
-        for v in self.hass.data.get(DOMAIN, {}).values():
-            if isinstance(v, QueueManager):
-                return v
-        return None
+        return getattr(self.config_entry, "runtime_data", None)
 
     async def async_step_map_calib(self, user_input=None):
         """Status kalibracji mapy + reset. Sama kalibracja (obrysowanie
@@ -348,9 +350,19 @@ class DreameZoneQueueOptionsFlow(config_entries.OptionsFlow):
 
     # ---------------- settings ----------------
     async def async_step_settings(self, user_input=None):
+        errors: dict[str, str] = {}
         if user_input is not None:
-            return self._save(**user_input)
-        o = self._opts
+            svc = (user_input.get(CONF_NOTIFY_SERVICE) or "").strip()
+            if svc and not self.hass.services.has_service(
+                    "notify", svc.removeprefix("notify.")):
+                errors[CONF_NOTIFY_SERVICE] = "notify_unknown"
+            else:
+                # wyczyszczone pola Optional nie przychodza w user_input —
+                # bez tego zostalaby stara wartosc i nie dalo sie ich usunac
+                kept = {k: v for k, v in self.config_entry.options.items()
+                        if k not in _SETTINGS_OPTIONAL}
+                return self.async_create_entry(title="", data={**kept, **user_input})
+        o = {**self._opts, **(user_input or {})}
         schema = vol.Schema(
             {
                 vol.Required(
@@ -370,6 +382,15 @@ class DreameZoneQueueOptionsFlow(config_entries.OptionsFlow):
                 vol.Required(
                     CONF_WAIT_WASH, default=o.get(CONF_WAIT_WASH, False)
                 ): BooleanSelector(),
+                vol.Required(
+                    CONF_DIRECT_NEXT, default=o.get(CONF_DIRECT_NEXT, False)
+                ): BooleanSelector(),
+                vol.Required(
+                    CONF_DIRECT_MIN_BATTERY,
+                    default=o.get(CONF_DIRECT_MIN_BATTERY, DEFAULT_DIRECT_MIN_BATTERY),
+                ): NumberSelector(
+                    NumberSelectorConfig(min=15, max=90, step=5, mode=NumberSelectorMode.BOX)
+                ),
                 vol.Optional(
                     CONF_TASK_SENSOR,
                     description={"suggested_value": o.get(CONF_TASK_SENSOR)},
@@ -392,4 +413,5 @@ class DreameZoneQueueOptionsFlow(config_entries.OptionsFlow):
                 ): EntitySelector(EntitySelectorConfig(domain="select")),
             }
         )
-        return self.async_show_form(step_id="settings", data_schema=schema)
+        return self.async_show_form(step_id="settings", data_schema=schema,
+                                    errors=errors)

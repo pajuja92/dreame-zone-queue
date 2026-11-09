@@ -24,6 +24,7 @@
           "settings": "Settings",
           "bulk_edit": "Bulk edit rooms (YAML)",
           "import_dreame": "Import rooms from Dreame",
+          "map_calib": "Map calibration",
           "detect_rooms": "Detect rooms from Dreame"
         }
       },
@@ -79,10 +80,13 @@
           "cleaning_mode_select_entity": "Cleaning mode select entity (default: derived from vacuum)",
           "wait_wash_between_rooms": "Wait for mop washing between rooms",
           "task_status_sensor": "Dreame task_status sensor (default: derived from vacuum)",
-          "notify_service": "Push notification service (optional)"
+          "notify_service": "Push notification service (optional)",
+          "direct_next_room": "After vacuum-only rooms go straight to the next room",
+          "direct_min_battery": "Min. battery to go straight (%)"
         },
         "data_description": {
-          "notify_service": "e.g. notify.mobile_app_phone — phone alert when the robot errors, gets stuck or sits paused (repeated after 10 min of error)."
+          "notify_service": "e.g. notify.mobile_app_phone — phone alert when the robot errors, gets stuck or sits paused (repeated after 10 min of error).",
+          "direct_next_room": "When the robot finishes a room without the mop (vacuum only), the queue sends the next zone right away instead of waiting for the dock return. After mopping it still docks so the station can wash the mop. It also docks below the battery threshold and at the end of the queue."
         }
       },
       "bulk_edit": {
@@ -122,12 +126,40 @@
       "invalid_rooms_yaml": "Invalid rooms YAML — details shown above the form.",
       "no_dreame_rooms": "No rooms found in the Dreame entities. Make sure the map camera works and the map is loaded.",
       "no_rooms_found": "No rooms found — check that the map camera entity has a 'rooms' attribute.",
-      "zone_too_small": "The zone is smaller than 120 mm on one side — the robot rejects such zones."
+      "zone_too_small": "The zone is smaller than 120 mm on one side — the robot rejects such zones.",
+      "notify_unknown": "No such notify service (e.g. notify.mobile_app_phone)."
     },
     "abort": {
       "no_rooms": "No rooms defined yet.",
       "calib_cleared": "Calibration cleared — the card will ask for a new one next time you use \"Custom zone\".",
       "calib_unchanged": "Calibration unchanged."
+    }
+  },
+  "exceptions": {
+    "not_loaded": {
+      "message": "Dreame Zone Queue is not loaded."
+    },
+    "unknown_room": {
+      "message": "Unknown room \"{room}\" — add it in the integration options."
+    },
+    "unknown_preset": {
+      "message": "Unknown preset \"{preset}\"."
+    },
+    "invalid_zone": {
+      "message": "Invalid zone: {zone}."
+    },
+    "zone_too_small": {
+      "message": "Zone too small — the robot rejects zones narrower than {min} mm."
+    }
+  },
+  "issues": {
+    "dreame_unavailable": {
+      "title": "The queue cannot dispatch the robot",
+      "description": "The dreame_vacuum.vacuum_clean_zone action is unavailable (Dreame integration not loaded). The queue retried a few times and paused. Check the Dreame integration and press Continue on the queue card."
+    },
+    "notify_failed": {
+      "title": "Push notification failed",
+      "description": "Sending via {service} failed: {error}. Fix the notify service in Dreame Zone Queue options → Settings."
     }
   }
 }

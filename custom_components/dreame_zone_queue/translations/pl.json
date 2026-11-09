@@ -24,6 +24,7 @@
           "settings": "Ustawienia",
           "bulk_edit": "Edytuj wszystkie pokoje (YAML)",
           "import_dreame": "Importuj pokoje z Dreame",
+          "map_calib": "Kalibracja mapy",
           "detect_rooms": "Wykryj pokoje z Dreame"
         }
       },
@@ -79,10 +80,13 @@
           "cleaning_mode_select_entity": "Encja select trybu sprzątania (domyślnie: wyprowadzana z odkurzacza)",
           "wait_wash_between_rooms": "Czekaj na mycie mopa między pokojami",
           "task_status_sensor": "Sensor task_status dreame (domyślnie: wyprowadzany z odkurzacza)",
-          "notify_service": "Usługa powiadomień push (opcjonalnie)"
+          "notify_service": "Usługa powiadomień push (opcjonalnie)",
+          "direct_next_room": "Po samym odkurzaniu jedź prosto do następnego pokoju",
+          "direct_min_battery": "Min. bateria do jazdy prosto (%)"
         },
         "data_description": {
-          "notify_service": "np. notify.mobile_app_telefon — alarm na telefon, gdy robot ma błąd, utknął albo stoi wstrzymany (powtórka po 10 min błędu)."
+          "notify_service": "np. notify.mobile_app_telefon — alarm na telefon, gdy robot ma błąd, utknął albo stoi wstrzymany (powtórka po 10 min błędu).",
+          "direct_next_room": "Gdy robot skończy pokój bez mopa (samo odkurzanie), kolejka od razu wysyła następną strefę zamiast czekać na powrót do bazy. Po mopowaniu robot nadal wraca do bazy, żeby stacja umyła mop. Do bazy pojedzie też przy niższej baterii i na końcu kolejki."
         }
       },
       "bulk_edit": {
@@ -122,12 +126,40 @@
       "invalid_rooms_yaml": "Niepoprawny YAML pokoi — szczegóły nad formularzem.",
       "no_dreame_rooms": "Nie znaleziono pokoi w encjach Dreame. Upewnij się, że kamera mapy działa i mapa jest wczytana.",
       "no_rooms_found": "Nie znaleziono pokoi — sprawdź, czy encja kamery mapy ma atrybut „rooms”.",
-      "zone_too_small": "Strefa jest mniejsza niż 120 mm na jednym z boków — robot odrzuca takie strefy."
+      "zone_too_small": "Strefa jest mniejsza niż 120 mm na jednym z boków — robot odrzuca takie strefy.",
+      "notify_unknown": "Nie ma takiej usługi powiadomień (np. notify.mobile_app_telefon)."
     },
     "abort": {
       "no_rooms": "Nie zdefiniowano jeszcze żadnych pokoi.",
       "calib_cleared": "Kalibracja wyczyszczona — karta poprosi o nową przy następnym użyciu „Własnej strefy\".",
       "calib_unchanged": "Kalibracja bez zmian."
+    }
+  },
+  "exceptions": {
+    "not_loaded": {
+      "message": "Dreame Zone Queue nie jest załadowane."
+    },
+    "unknown_room": {
+      "message": "Nieznany pokój „{room}” — dodaj go w opcjach integracji."
+    },
+    "unknown_preset": {
+      "message": "Nieznany zestaw „{preset}”."
+    },
+    "invalid_zone": {
+      "message": "Nieprawidłowa strefa: {zone}."
+    },
+    "zone_too_small": {
+      "message": "Strefa za mała — robot odrzuca strefy węższe niż {min} mm."
+    }
+  },
+  "issues": {
+    "dreame_unavailable": {
+      "title": "Kolejka nie może wysłać robota",
+      "description": "Usługa dreame_vacuum.vacuum_clean_zone jest niedostępna (integracja Dreame niezaładowana). Kolejka ponowiła wysyłkę kilka razy i się wstrzymała. Sprawdź integrację Dreame i naciśnij Kontynuuj na karcie kolejki."
+    },
+    "notify_failed": {
+      "title": "Powiadomienie push nie dotarło",
+      "description": "Wysyłka przez {service} nie powiodła się: {error}. Popraw usługę powiadomień w opcjach Dreame Zone Queue → Ustawienia."
     }
   }
 }

@@ -19,6 +19,11 @@ CONF_WATER_SELECT = "water_select_entity"
 CONF_MODE_SELECT = "cleaning_mode_select_entity"
 CONF_DELAY_BETWEEN_S = "delay_between_zones"
 CONF_WAIT_WASH = "wait_wash_between_rooms"
+# koniec pokoju w drodze do bazy -> od razu nastepny pokoj (bez dojazdu/mycia)
+CONF_DIRECT_NEXT = "direct_next_room"
+CONF_DIRECT_MIN_BATTERY = "direct_min_battery"
+DEFAULT_DIRECT_MIN_BATTERY = 30   # powroty na ladowanie L10 Prime: ~15-16%
+DIRECT_MIN_AREA_RATIO = 0.5       # realne konce pokoju 57-82%, przerwania 1-39%
 CONF_TASK_SENSOR = "task_status_sensor"
 CONF_NOTIFY_SERVICE = "notify_service"  # np. notify.mobile_app_telefon — push przy problemach
 
@@ -93,3 +98,12 @@ ATTR_ITEM_ID = "item_id"
 ATTR_SUCTION = "suction"
 ATTR_WATER = "water"
 ATTR_REPEATS = "repeats"
+
+# niezawodnosc / samodzielnosc (przeglad 2026-11-09)
+DISPATCH_RETRIES = 3            # ponowienia wysylki strefy przed pauza
+DISPATCH_RETRY_S = 60
+RESUME_AFTER_RESTART_S = 60     # po restarcie HA: sprawdz robota i wznow kolejke
+RESUME_TRIES = 5                # ...gdy encja robota jeszcze niedostepna
+INTERRUPT_WARN_S = 2 * 3600     # przerwa (ladowanie, DND...) dluzsza = push
+CUSTOM_HISTORY_DAYS = 30        # historia wlasnych stref bez nowych przebiegow
+FEEDBACK_ARCHIVES_KEEP = 5      # zarchiwizowane dzienniki feedbacku

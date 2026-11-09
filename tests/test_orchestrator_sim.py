@@ -49,6 +49,10 @@ class FakeStore:
         import copy
         FakeStore.last = copy.deepcopy(data)
 
+    def async_delay_save(self, data_func, delay=0):
+        import copy
+        FakeStore.last = copy.deepcopy(data_func())
+
 
 _stub_module("homeassistant")
 _stub_module("homeassistant.core", Event=FakeEvent, HomeAssistant=object,
@@ -60,6 +64,23 @@ _stub_module("homeassistant.helpers.event",
              async_call_later=_async_call_later,
              async_track_state_change_event=lambda hass, ents, cb: (lambda: None))
 _stub_module("homeassistant.helpers.storage", Store=FakeStore)
+ISSUES: dict[str, dict] = {}
+_stub_module(
+    "homeassistant.helpers.issue_registry",
+    IssueSeverity=SimpleNamespace(WARNING="warning", ERROR="error"),
+    async_create_issue=lambda hass, domain, issue_id, **kw: ISSUES.__setitem__(issue_id, kw),
+    async_delete_issue=lambda hass, domain, issue_id: ISSUES.pop(issue_id, None),
+)
+
+
+class ServiceValidationError(Exception):
+    def __init__(self, *args, translation_domain=None, translation_key=None,
+                 translation_placeholders=None):
+        super().__init__(*args)
+        self.translation_key = translation_key
+
+
+_stub_module("homeassistant.exceptions", ServiceValidationError=ServiceValidationError)
 _stub_module("homeassistant.components")
 _stub_module(
     "homeassistant.components.persistent_notification",
@@ -716,8 +737,12 @@ async def test_dispatch_service_missing_keeps_room_pending():
     hass.states[VAC] = st("docked", **TASK_DONE)
     hass.services.available = False
     await m.async_start()
+    assert m.running and not zone_calls(hass)  # ponowienie zaplanowane
+    for _ in range(const.DISPATCH_RETRIES):
+        await fire_timers(hass)
     assert not m.running
     assert "dreame_vacuum" in m.paused_reason
+    assert "dreame_unavailable" in ISSUES
     assert [i["status"] for i in m.queue] == ["pending", "pending"]
     assert not zone_calls(hass)
     # integracja wrocila -> Kontynuuj rusza od TEGO SAMEGO pokoju
@@ -725,6 +750,7 @@ async def test_dispatch_service_missing_keeps_room_pending():
     await m.async_start()
     assert m.running and m.queue[0]["status"] == "active"
     assert len(zone_calls(hass)) == 1
+    assert "dreame_unavailable" not in ISSUES  # naprawa znika po udanej wysylce
 
 
 async def test_dispatch_failure_reverts_room_to_pending():
@@ -742,6 +768,8 @@ async def test_dispatch_failure_reverts_room_to_pending():
 
     hass.services.async_call = failing
     await m.async_start()
+    for _ in range(const.DISPATCH_RETRIES):
+        await fire_timers(hass)
     assert not m.running and "błąd wysyłki" in m.paused_reason
     assert [i["status"] for i in m.queue] == ["pending", "pending"]
     assert "Salon" not in m.history  # nieudana wysylka nie zapisuje przebiegu
@@ -875,10 +903,13 @@ async def test_add_custom_zone():
     assert item["custom"] and item["zone"] == [-400, -3500, 2300, -600]
     assert item["room"] == "Pod stołem" and item["water"] == "wet"
     assert item["repeats"] == 2 and item["suction"] == "standard"
-    # za mala strefa -> odrzucona z powiadomieniem
-    await m.async_add("Mini", zone=[0, 0, 100, 100])
+    # za mala strefa -> blad walidacji (karta/automatyzacja go widzi)
+    try:
+        await m.async_add("Mini", zone=[0, 0, 100, 100])
+        raise AssertionError("expected ServiceValidationError")
+    except ServiceValidationError as err:
+        assert err.translation_key == "zone_too_small"
     assert len(m.queue) == 1
-    assert any("za mała" in n for n in NOTIFICATIONS)
     # dispatch uzywa strefy z itemu
     hass.states[VAC] = st("docked", **TASK_DONE)
     await m.async_start()
@@ -1098,12 +1129,246 @@ async def test_feedback_diag_logs_only_changes():
     assert diag[1].endswith('attrs_diff={"battery": 49}'), diag[1]
 
 
+async def test_stop_cancels_scheduled_dispatch():
+    """Pomin -> Stop w ciagu 4 s: zaplanowana wysylka NIE moze ruszyc robota."""
+    hass, m = mk()
+    await m.async_setup()
+    await m.async_add("Salon")
+    await m.async_add("Kuchnia")
+    hass.states[VAC] = st("docked", **TASK_DONE)
+    await m.async_start()
+    await m.async_skip()  # wysylka Kuchni za 4 s
+    await m.async_stop()
+    await fire_timers(hass)
+    assert len(zone_calls(hass)) == 1 and not m.running
+    assert m.queue[1]["status"] == "pending"
+
+
+async def test_clear_cancels_scheduled_dispatch():
+    hass, m = mk({const.CONF_DELAY_BETWEEN_S: 30})
+    await m.async_setup()
+    await m.async_add("Salon")
+    await m.async_add("Kuchnia")
+    hass.states[VAC] = st("docked", **TASK_DONE)
+    await m.async_start()
+    send(m, st("cleaning", **CLEANING), st("returning", **TASK_DONE))
+    await drain()  # Salon done, Kuchnia za 30 s
+    await m.async_clear()
+    await m.async_add("Salon")  # nowa kolejka, jeszcze nie uruchomiona
+    await fire_timers(hass)
+    assert len(zone_calls(hass)) == 1 and not m.running
+
+
+async def test_restart_between_rooms_resumes_queue():
+    """Restart HA w przerwie miedzy pokojami: kolejka wraca sama."""
+    hass, m = mk({const.CONF_DELAY_BETWEEN_S: 30})
+    await m.async_setup()
+    await m.async_add("Salon")
+    await m.async_add("Kuchnia")
+    hass.states[VAC] = st("docked", **TASK_DONE)
+    await m.async_start()
+    send(m, st("cleaning", **CLEANING), st("returning", **TASK_DONE))
+    await drain()
+    hass2, m2 = await _restart(m)
+    hass2.states[VAC] = st("docked", **TASK_DONE)
+    await m2.async_setup()
+    assert not m2.running  # nie w ciemno — najpierw sprawdzenie robota
+    await fire_timers(hass2)
+    assert m2.running and m2.queue[1]["status"] == "active"
+    assert len(zone_calls(hass2)) == 1
+
+
+async def test_restart_resume_waits_when_robot_busy():
+    hass, m = mk()
+    await m.async_setup()
+    await m.async_add("Salon")
+    await m.async_add("Kuchnia")
+    hass.states[VAC] = st("docked", **TASK_DONE)
+    await m.async_start()
+    send(m, st("cleaning", **CLEANING), st("returning", **TASK_DONE))
+    await drain()
+    hass2, m2 = await _restart(m)
+    # robot sprzata cos innego (przycisk / aplikacja)
+    hass2.states[VAC] = st("cleaning", running=True, segment_cleaning=True)
+    await m2.async_setup()
+    await fire_timers(hass2)
+    assert not m2.running and not zone_calls(hass2)
+    assert any("zajęty" in n for n in NOTIFICATIONS)
+
+
+async def test_restart_after_stop_stays_stopped():
+    hass, m = mk()
+    await m.async_setup()
+    await m.async_add("Salon")
+    await m.async_add("Kuchnia")
+    hass.states[VAC] = st("docked", **TASK_DONE)
+    await m.async_start()
+    await m.async_stop()
+    hass2, m2 = await _restart(m)
+    hass2.states[VAC] = st("docked", **TASK_DONE)
+    await m2.async_setup()
+    await fire_timers(hass2)
+    assert not m2.running and not zone_calls(hass2)
+
+
+async def test_restored_no_task_tells_the_user():
+    hass, m = mk()
+    await m.async_setup()
+    await m.async_add("Salon")
+    hass.states[VAC] = st("docked", **TASK_DONE)
+    await m.async_start()
+    hass2, m2 = await _restart(m)
+    hass2.states[VAC] = st("docked", **TASK_DONE)
+    await m2.async_setup()
+    await m2._async_reconcile()
+    assert m2.queue[0]["status"] == "pending"
+    assert any("Kontynuuj" in n for n in NOTIFICATIONS)
+
+
+async def test_dispatch_retry_recovers_without_user():
+    """dreame_vacuum laduje sie dluzej po restarcie — ponowienie wysyla sama."""
+    hass, m = mk()
+    await m.async_setup()
+    await m.async_add("Salon")
+    hass.states[VAC] = st("docked", **TASK_DONE)
+    hass.services.available = False
+    await m.async_start()
+    await fire_timers(hass)
+    hass.services.available = True
+    await fire_timers(hass)
+    assert m.running and m.queue[0]["status"] == "active"
+    assert len(zone_calls(hass)) == 1
+
+
+async def test_long_interruption_alert_once():
+    """Przerwa (np. ladowanie z wznowieniem) dluzsza niz 2 h -> jeden push."""
+    hass, m = mk({const.CONF_NOTIFY_SERVICE: "mobile_app_tel"})
+    await m.async_setup()
+    await m.async_add("Salon")
+    hass.states[VAC] = st("docked", **TASK_DONE)
+    await m.async_start()
+    charging = st("docked", zone_cleaning=True, started=True, running=False,
+                  charging=True, resume_cleaning=True)
+    send(m, st("cleaning", **CLEANING), charging)
+    m.queue[0]["interrupted_since"] -= const.INTERRUPT_WARN_S + 5
+    await m._async_reconcile()
+    await m._async_reconcile()
+    await drain()
+    pushes = [c for c in hass.services.calls if c[0] == "notify"]
+    assert len(pushes) == 1 and "przerwa" in pushes[0][2]["message"]
+
+
+async def test_push_failure_is_caught_and_reported():
+    hass, m = mk({const.CONF_NOTIFY_SERVICE: "notify.literowka"})
+    await m.async_setup()
+    orig = hass.services.async_call
+
+    async def failing(domain, service, data, blocking=False):
+        if domain == "notify":
+            raise RuntimeError("Action notify.literowka not found")
+        return await orig(domain, service, data, blocking)
+
+    hass.services.async_call = failing
+    m._user_notify("test", push=True)
+    await drain()
+    assert "notify_failed" in ISSUES
+
+
+async def test_unknown_room_raises_validation_error():
+    hass, m = mk()
+    await m.async_setup()
+    try:
+        await m.async_add("Nieistniejacy")
+    except ServiceValidationError as err:
+        assert err.translation_key == "unknown_room"
+    else:
+        raise AssertionError("expected ServiceValidationError")
+
+
+async def test_custom_zone_history_pruned_after_restart():
+    hass, m = mk()
+    await m.async_setup()
+    old = __import__("time").time() - (const.CUSTOM_HISTORY_DAYS + 1) * 86400
+    m.history["Salon · strefa"] = [{"ts": old, "outcome": "done"}]
+    m.history["Salon"] = [{"ts": old, "outcome": "done"}]
+    m.stats["Salon · strefa"] = {"avg_s": 60, "n": 1}
+    hass2, m2 = await _restart(m)
+    await m2.async_setup()
+    assert "Salon · strefa" not in m2.history and "Salon · strefa" not in m2.stats
+    assert "Salon" in m2.history  # pokoje z konfiguracji zostaja
+
+
+# ---- jazda prosto do nastepnego pokoju (bez dojazdu do bazy) ----
+END_RETURN = dict(running=True, returning=True, zone_cleaning=True,
+                  started=True, resume_cleaning=True, vacuum_state="returning")
+
+
+async def _two_rooms(opts, battery=60, water1="off", water2="off"):
+    hass, m = mk({const.CONF_DIRECT_NEXT: True, const.CONF_WAIT_WASH: True,
+                  **opts})
+    await m.async_setup()
+    await m.async_add("Salon", water=water1)       # strefa 4 m2
+    await m.async_add("Kuchnia", water=water2)
+    hass.states[VAC] = st("docked", battery=battery, **TASK_DONE)
+    await m.async_start()
+    send(m, st("cleaning", battery=battery, **CLEANING),
+         st("returning", battery=battery, cleaned_area=3, **END_RETURN))
+    await fire_timers(hass)
+    return hass, m
+
+
+def _went_direct(hass, m):
+    return m.queue[0]["status"] == "done" and m.queue[1]["status"] == "active" \
+        and len(zone_calls(hass)) == 2 and m._wait_wash is None
+
+
+async def test_direct_after_sweep_to_sweep():
+    hass, m = await _two_rooms({})
+    assert _went_direct(hass, m)
+
+
+async def test_direct_after_sweep_to_mop():
+    hass, m = await _two_rooms({}, water2="moist")  # mop czysty -> prosto
+    assert _went_direct(hass, m)
+
+
+async def test_mop_room_returns_to_wash():
+    hass, m = await _two_rooms({}, water1="moist", water2="moist")
+    assert m.queue[0]["status"] == "active" and m.queue[0]["interrupted"]
+    assert len(zone_calls(hass)) == 1
+
+
+async def test_direct_low_battery_goes_to_dock():
+    hass, m = await _two_rooms({}, battery=20)
+    assert m.queue[0]["status"] == "active" and len(zone_calls(hass)) == 1
+
+
+async def test_direct_mid_room_return_not_done():
+    # powrot w polowie pokoju (mala sprzatnieta powierzchnia) to nie koniec
+    hass, m = mk({const.CONF_DIRECT_NEXT: True})
+    await m.async_setup()
+    await m.async_add("Salon", water="off")
+    await m.async_add("Kuchnia", water="off")
+    hass.states[VAC] = st("docked", battery=60, **TASK_DONE)
+    await m.async_start()
+    send(m, st("cleaning", battery=60, **CLEANING),
+         st("returning", battery=60, cleaned_area=1, **END_RETURN))
+    await fire_timers(hass)
+    assert m.queue[0]["status"] == "active" and len(zone_calls(hass)) == 1
+
+
+async def test_direct_off_keeps_dock_return():
+    hass, m = await _two_rooms({const.CONF_DIRECT_NEXT: False})
+    assert m.queue[0]["status"] == "active" and len(zone_calls(hass)) == 1
+
+
 SCENARIOS = [v for k, v in sorted(globals().items()) if k.startswith("test_")]
 
 
 async def main():
     for fn in SCENARIOS:
         NOTIFICATIONS.clear()
+        ISSUES.clear()
         await fn()
         print(f"OK  {fn.__name__}")
     print(f"\n{len(SCENARIOS)} scenarios passed")
