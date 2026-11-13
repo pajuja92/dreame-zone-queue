@@ -69,6 +69,8 @@ class QueueSensor(SensorEntity):
             "progress": snap["progress"],
             "eta_s": snap["eta_s"],
             "presets": snap["presets"],
+            "preset_icons": snap["preset_icons"],
+            "preset_items": snap["preset_items"],
             "count_pending": snap["count_pending"],
             "vacuum_entity": snap["vacuum_entity"],
             "feedback": snap["feedback"],

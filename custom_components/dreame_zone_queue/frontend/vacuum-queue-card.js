@@ -15,6 +15,7 @@ const STATUS_ICON = {
 const SUCTION = ["off", "quiet", "standard", "strong", "turbo"];
 const WATER = ["off", "slightly_dry", "moist", "wet"];
 const REPEATS = [1, 2, 3];
+const ZONE_KEY = "__zone__";  // pseudo-pokoj w wierszu dodawania = „Własna strefa"
 
 const T_SUCTION = { off: "wy\u0142.", quiet: "cichy", standard: "standard",
                     strong: "mocny", turbo: "turbo" };
@@ -78,6 +79,14 @@ class VacuumQueueCard extends HTMLElement {
   setConfig(config) {
     this._config = { ...DEFAULTS, ...config };
     this._fp = null;
+    this._addSel = new Set();  // zaznaczone pokoje w wierszu dodawania
+    this._addS = "";          // wybrane ssanie ("" = domyslne pokoju)
+    this._addW = "";          // wybrany mop
+    this._pSel = "";          // wybrany preset ("" = pusta opcja)
+    this._saveOpen = false;   // pole zapisu presetu na dole sekcji
+    this._saveMode = "new";   // "new" = zapis kolejki jako preset, "icon" = zmiana ikony
+    this._saveIcon = "\u2B50";
+    this._saveName = "";
     if (this._hass) this._render(this._hass.states[this._config.entity]);
   }
   static getStubConfig() { return { entity: "sensor.vacuum_zone_queue" }; }
@@ -121,6 +130,8 @@ class VacuumQueueCard extends HTMLElement {
         + "#" + st.state
         + "#" + (st.attributes.rooms || []).join(",")
         + "#" + (st.attributes.presets || []).join(",")
+        + "#" + JSON.stringify(st.attributes.preset_icons || {})
+        + "#" + JSON.stringify(st.attributes.preset_items || {})
         + "#" + (st.attributes.feedback ? "fb" : "")
       : "missing";
     if (struct === this._structKey && this.shadowRoot) {
@@ -396,7 +407,7 @@ class VacuumQueueCard extends HTMLElement {
    * kazdego renderu mapy). Tylko gdy kamera ich nie ma: reczna kalibracja
    * (obrysowanie znanego pokoju, potwierdzana przyciskiem), zapisywana
    * w Store integracji i ponawiana po zmianie rozmiaru mapy. */
-  async _zoneDialog() {
+  async _zoneDialog(defaults = {}) {
     let draw_;
     try {
       draw_ = await import(`./dzq-draw.js${new URL(import.meta.url).search}`);
@@ -404,7 +415,7 @@ class VacuumQueueCard extends HTMLElement {
       this._toast("⚠ Nie udało się wczytać edytora mapy: " + errMsg(e));
       return;
     }
-    const { attachDraw, defaultMode, calibFromCamera, mmToPx, roomOf } = draw_;
+    const { attachDraw, attachZoneEditor, ZONE_COLORS, defaultMode, calibFromCamera, mmToPx, roomOf } = draw_;
     const m = this._openModal("dzq-zone-modal",
       "padding:18px;width:min(760px,100%);max-height:92vh;" +
       "display:flex;flex-direction:column;gap:10px;overflow:auto;");
@@ -523,7 +534,7 @@ class VacuumQueueCard extends HTMLElement {
         </div>
         <div style="outline:3px dashed ${CAL};outline-offset:2px;border-radius:10px">${mapBlock}</div>
         <div class="chint" style="font-size:.88em;color:var(--secondary-text-color)">
-          Obrysuj: <b></b> · dwa palce / kółko = zoom i przesuwanie</div>
+          Obrysuj: <b></b> · Cmd + scroll = zoom, scroll / dwa palce = przesuwanie</div>
         <div style="display:flex;justify-content:flex-end;gap:8px">
           <button data-x="close" style="${btnOff}">Anuluj</button>
           <button data-x="csave" style="${btnCss}font-weight:600;background:${CAL};color:#000"></button>
@@ -637,7 +648,7 @@ class VacuumQueueCard extends HTMLElement {
       setMode(defaultMode());
     };
 
-    /* ---------- FAZA 2: rysowanie strefy ------------------------------- */
+    /* ---------- FAZA 2: rysowanie wielu stref -------------------------- */
     const renderDraw = () => {
       phase++;
       box.style.border = "";
@@ -662,23 +673,15 @@ class VacuumQueueCard extends HTMLElement {
           <button data-x="mrect" style="${btnOn}">▭ Prostokąt</button>
           <button data-x="mpoly" style="${btnOff}">△ Wielokąt</button>
           <button data-x="mundo" style="${btnOff};display:none">↩ Cofnij punkt</button>
-          <button data-x="mclear" style="${btnOff}">Wyczyść</button>
+          <button data-x="mdone" style="${btnOff};display:none">✓ Zakończ kształt</button>
+          <button data-x="mclear" style="${btnOff}">Wyczyść strefę</button>
           <span class="zhint" style="color:var(--secondary-text-color)"></span>
         </div>
         ${mapBlock}
         <div class="zinfo" style="font-size:.9em;color:var(--secondary-text-color)"></div>
-        <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap">
-          <input class="zname" placeholder="Nazwa (np. Pod stołem)" style="${selCss};flex:1;min-width:120px">
-          <select class="zsuction" style="${selCss}">${SUCTION.map((o) =>
-            `<option value="${o}" ${o === "standard" ? "selected" : ""}>Ssanie: ${T_SUCTION[o] || o}</option>`).join("")}</select>
-          <select class="zwater" style="${selCss}">${WATER.map((o) =>
-            `<option value="${o}">Mop: ${T_WATER[o] || o}</option>`).join("")}</select>
-          <select class="zrepeats" style="${selCss}">${REPEATS.map((o) =>
-            `<option value="${o}">${o}×</option>`).join("")}</select>
-        </div>
+        <div class="zrows" style="display:flex;flex-direction:column;gap:8px"></div>
         <div style="display:flex;justify-content:flex-end;gap:8px">
           <button data-x="close" style="${btnOff}">Anuluj</button>
-          <button data-x="done" style="${btnOff};display:none">✓ Zakończ kształt</button>
           <button data-x="ok" disabled style="${btnCss}font-weight:600;background:var(--primary-color,#03a9f4);color:#fff;opacity:.5">+ Dodaj do kolejki</button>
         </div>`;
       wireClose();
@@ -692,11 +695,11 @@ class VacuumQueueCard extends HTMLElement {
       const info = box.querySelector(".zinfo");
       const hint = box.querySelector(".zhint");
       const okBtn = box.querySelector('[data-x="ok"]');
-      const doneBtn = box.querySelector('[data-x="done"]');
+      const doneBtn = box.querySelector('[data-x="mdone"]');
       const mrect = box.querySelector('[data-x="mrect"]');
       const mpoly = box.querySelector('[data-x="mpoly"]');
       const undoBtn = box.querySelector('[data-x="mundo"]');
-      let zoneMm = null;
+      const rowsEl = box.querySelector(".zrows");
 
       img.onload = () => waitCamCalib(() => {
         if (staleFor(img)) {
@@ -719,79 +722,193 @@ class VacuumQueueCard extends HTMLElement {
         const xs = mm.map((p) => p[0]), ys = mm.map((p) => p[1]);
         return [Math.min(...xs), Math.min(...ys), Math.max(...xs), Math.max(...ys)];
       };
-      const acceptZone = (z, note) => {
-        const wMm = z[2] - z[0], hMm = z[3] - z[1];
-        if (wMm < 120 || hMm < 120) {
-          info.textContent = "⚠ Strefa za mała (min 120 mm na bok) — narysuj większą.";
-          zoneMm = null;
-          okBtn.disabled = true;
-          okBtn.style.opacity = ".5";
-          return;
-        }
-        zoneMm = z;
-        const inRoom = roomOf(z, zones);
-        info.textContent = (inRoom ? `${inRoom} · ` : "") + `strefa [${z.join(", ")}] · ` +
-          `${(wMm / 1000).toFixed(1)} × ${(hMm / 1000).toFixed(1)} m${note || ""}`;
-        okBtn.disabled = false;
-        okBtn.style.opacity = "1";
+      // wielokat jest wysylany jako prostokat obejmujacy (jak dotad)
+      const zoneOf = (shape) => {
+        if (!shape) return null;
+        const pts = shape.kind === "rect" ? shape.pts : shape.pts;
+        const z = bboxToMm(pts);
+        return (z[2] - z[0] >= 120 && z[3] - z[1] >= 120) ? z : null;
       };
-      const draw = attachDraw(zwrap, img, box.querySelector(".zsvg"), {
-        shape: (sh) => acceptZone(bboxToMm(sh.pts),
-          sh.kind === "poly" ? " · (prostokąt obejmujący wielokąt)" : ""),
+
+      // ---- wiersze (jedna strefa = jeden wiersz); ksztalty trzyma edytor
+      const rows = [{ name: "", suction: defaults.suction || "standard",
+                      water: defaults.water || "off", repeats: 1 }];
+      let ed = null;
+      const sel = () => (ed ? ed.getSelected() : 0);
+      const rowInfo = (i) => {
+        const shape = ed && ed.shapes()[i];
+        if (!shape) return "narysuj na mapie";
+        const z = zoneOf(shape);
+        if (!z) return "⚠ za mała (min 120 mm na bok)";
+        const inRoom = roomOf(z, zones);
+        return (inRoom ? `${inRoom} · ` : "") + `strefa [${z.join(", ")}] · ${((z[2] - z[0]) / 1000).toFixed(1)} × ${((z[3] - z[1]) / 1000).toFixed(1)} m` +
+          (shape.kind === "poly" ? " · prostokąt obejmujący wielokąt" : "");
+      };
+      const validCount = () => rows.filter((_, i) => zoneOf(ed && ed.shapes()[i])).length;
+      const refreshOk = () => {
+        const n = validCount();
+        okBtn.disabled = n === 0;
+        okBtn.style.opacity = n ? "1" : ".5";
+        okBtn.textContent = n > 1 ? `+ Dodaj do kolejki (${n})` : "+ Dodaj do kolejki";
+      };
+      const refreshRows = () => {
+        rowsEl.querySelectorAll(".zrow").forEach((el) => {
+          const i = Number(el.dataset.i);
+          const on = i === sel();
+          el.style.borderColor = on ? ZONE_COLORS[i % ZONE_COLORS.length] : "var(--divider-color,#444)";
+          el.style.background = on ? "rgba(127,127,127,.12)" : "none";
+          el.querySelector(".zri").textContent = rowInfo(i);
+        });
+        refreshOk();
+      };
+      const updateHint = () => {
+        const m = ed.getMode();
+        const has = !!ed.shapes()[sel()];
+        hint.textContent = (has
+          ? "Przeciągnij uchwyty, by zmienić kształt; wnętrze przesuwa strefę."
+          : m === "rect"
+            ? "Przeciągnij prostokąt po mapie."
+            : "Tapnij narożniki (min. 3), potem „Zakończ kształt”.") +
+          " Cmd + scroll = zoom, scroll = przesuwanie.";
+      };
+      const selectRow = (i) => {
+        ed.select(i);
+        refreshRows();
+        updateHint();
+      };
+      const renderRows = () => {
+        rowsEl.innerHTML = rows.map((r, i) => `
+          <div class="zrow" data-i="${i}" style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;
+            border:2px solid var(--divider-color,#444);border-radius:12px;padding:8px;cursor:pointer">
+            <span style="width:24px;height:24px;border-radius:50%;flex:none;display:flex;align-items:center;
+              justify-content:center;font-weight:700;color:#1a1206;background:${ZONE_COLORS[i % ZONE_COLORS.length]}">${i + 1}</span>
+            <div style="flex:1;min-width:150px;display:flex;flex-direction:column;gap:2px">
+              <input class="zname" data-f="name" placeholder="Nazwa (np. Pod stołem)" value="${esc(r.name)}" style="${selCss}">
+              <span class="zri" style="font-size:.78em;color:var(--secondary-text-color)"></span>
+            </div>
+            <select data-f="suction" style="${selCss}">${SUCTION.map((o) =>
+              `<option value="${o}" ${o === r.suction ? "selected" : ""}>Ssanie: ${T_SUCTION[o] || o}</option>`).join("")}</select>
+            <select data-f="water" style="${selCss}">${WATER.map((o) =>
+              `<option value="${o}" ${o === r.water ? "selected" : ""}>Mop: ${T_WATER[o] || o}</option>`).join("")}</select>
+            <select data-f="repeats" style="${selCss}">${REPEATS.map((o) =>
+              `<option value="${o}" ${o === r.repeats ? "selected" : ""}>${o}×</option>`).join("")}</select>
+            ${rows.length > 1 ? `<button data-x="del" title="Usuń strefę (kliknij dwa razy)" style="${btnOff};padding:6px 12px">✕</button>` : ""}
+            ${i === rows.length - 1 ? `<button data-x="add" title="Dodaj kolejną strefę" style="${btnOn};padding:6px 14px;font-weight:700">+</button>` : ""}
+          </div>`).join("");
+        rowsEl.querySelectorAll(".zrow").forEach((el) => {
+          const i = Number(el.dataset.i);
+          el.addEventListener("pointerdown", () => { if (sel() !== i) selectRow(i); });
+          el.querySelectorAll("[data-f]").forEach((f) => {
+            const upd = () => { rows[i][f.dataset.f] = f.dataset.f === "repeats" ? Number(f.value) : f.value; };
+            f.oninput = upd; f.onchange = upd;
+          });
+          const del = el.querySelector('[data-x="del"]');
+          if (del) del.onclick = (e) => {
+            e.stopPropagation();
+            if (!del.dataset.armed) {            // usuniecie za dwuklikiem
+              del.dataset.armed = "1";
+              del.style.background = "var(--error-color,#d32f2f)";
+              del.style.color = "#fff";
+              setTimeout(() => {
+                if (!del.isConnected) return;
+                delete del.dataset.armed;
+                del.style.cssText = `${btnOff};padding:6px 12px`;
+              }, 3000);
+              return;
+            }
+            rows.splice(i, 1);
+            ed.removeRow(i);
+            renderRows();
+            refreshRows();
+            updateHint();
+          };
+          const add = el.querySelector('[data-x="add"]');
+          if (add) add.onclick = (e) => {
+            e.stopPropagation();
+            const last = rows[rows.length - 1];
+            rows.push({ name: "", suction: last.suction, water: last.water, repeats: last.repeats });
+            ed.addRow();
+            renderRows();
+            refreshRows();
+            updateHint();
+            const ne = rowsEl.querySelector(".zrow:last-child .zname");
+            if (ne) ne.focus();
+          };
+        });
+        refreshRows();
+      };
+
+      ed = attachZoneEditor(zwrap, img, box.querySelector(".zsvg"), {
+        change: () => { refreshRows(); updateHint(); },
+        select: () => {
+          refreshRows();
+          updateHint();
+          const row = rowsEl.querySelector(`.zrow[data-i="${sel()}"]`);
+          if (row && row.scrollIntoView) row.scrollIntoView({ block: "nearest" });
+        },
         progress: (n) => {
-          if (draw && draw.getMode() === "poly" && n > 0 && n < 3) {
-            info.textContent = `Punkty: ${n}/3 (minimum)`;
-          }
+          if (ed && ed.getMode() === "poly" && n > 0 && n < 3) info.textContent = `Punkty: ${n}/3 (minimum)`;
+          else info.textContent = "";
         },
       });
       const setMode = (m) => {
-        draw.setMode(m);
-        zoneMm = null;
-        info.textContent = "";
-        okBtn.disabled = true;
-        okBtn.style.opacity = ".5";
+        ed.setMode(m);
         mrect.style.cssText = m === "rect" ? btnOn : btnOff;
         mpoly.style.cssText = m === "poly" ? btnOn : btnOff;
         doneBtn.style.display = m === "poly" ? "" : "none";
         undoBtn.style.display = m === "poly" ? "" : "none";
-        hint.textContent = (m === "rect"
-          ? "Przeciągnij prostokąt po mapie."
-          : "Tapnij narożniki (min. 3), potem „Zakończ kształt”.") +
-          " Dwa palce / kółko = zoom.";
+        info.textContent = "";
+        updateHint();
       };
       mrect.onclick = () => setMode("rect");
       mpoly.onclick = () => setMode("poly");
-      undoBtn.onclick = () => draw.undo();
-      box.querySelector('[data-x="mclear"]').onclick = () => {
-        draw.clear();
-        zoneMm = null;
-        info.textContent = "";
-        okBtn.disabled = true;
-        okBtn.style.opacity = ".5";
-      };
+      undoBtn.onclick = () => ed.undoPoint();
       doneBtn.onclick = () => {
-        if (!draw.finish()) info.textContent = "⚠ Wielokąt wymaga min. 3 punktów.";
+        if (!ed.finishPoly()) info.textContent = "⚠ Wielokąt wymaga min. 3 punktów (i zaznaczonej strefy bez kształtu).";
+      };
+      box.querySelector('[data-x="mclear"]').onclick = () => {
+        ed.clearSelected();
+        info.textContent = "";
+        refreshRows();
+        updateHint();
       };
       zwrap.addEventListener("dblclick", () => {
-        if (draw.getMode() === "poly") doneBtn.onclick();
+        if (ed.getMode() === "poly") doneBtn.onclick();
       });
+      renderRows();
       setMode(defaultMode());
 
+      // Nazwa wpisu: „<pokój, w którym narysowano> · strefa", a własna nazwa
+      // dochodzi w nawiasie: „Jadalnia · strefa (Pod stołem)". Bez pokoju: „Strefa".
+      const itemName = (z, own) => {
+        const room = roomOf(z, zones);
+        const base = room ? `${room} · strefa` : "Strefa";
+        return own ? `${base} (${own})` : base;
+      };
       okBtn.onclick = async () => {
-        if (!zoneMm || okBtn.disabled) return;
-        okBtn.disabled = true;
-        const ok = await this._call("add", {
-          room: ((r, n) => r ? `${r} · ${n || "strefa"}` : (n || "Strefa"))(
-            roomOf(zoneMm, zones), box.querySelector(".zname").value.trim()),
-          zone: zoneMm,
-          suction: box.querySelector(".zsuction").value,
-          water: box.querySelector(".zwater").value,
-          repeats: Number(box.querySelector(".zrepeats").value),
+        if (okBtn.disabled) return;
+        const out = [];
+        rows.forEach((r, i) => {
+          const z = zoneOf(ed.shapes()[i]);
+          if (z) out.push({ r, z });
         });
-        // blad: _call pokazal toast, okno zostaje z narysowana strefa
-        if (!ok) { okBtn.disabled = !zoneMm; return; }
+        if (!out.length) return;
+        okBtn.disabled = true;
+        let added = 0;
+        for (const { r, z } of out) {
+          const ok = await this._call("add", {
+            room: itemName(z, r.name.trim()),
+            zone: z,
+            suction: r.suction,
+            water: r.water,
+            repeats: r.repeats,
+          });
+          if (!ok) break;           // blad: _call pokazal toast, okno zostaje
+          added++;
+        }
+        if (added < out.length) { okBtn.disabled = false; refreshOk(); return; }
         close();
-        this._toast("✓ Strefa dodana do kolejki");
+        this._toast(added > 1 ? `✓ Dodano ${added} strefy do kolejki` : "✓ Strefa dodana do kolejki");
       };
     };
 
@@ -870,6 +987,22 @@ class VacuumQueueCard extends HTMLElement {
     if (!this._bulkMode) this._bulkMode = c.bulk_mode || "all";
     const selMode = c.show_bulk_edit && !ro && this._bulkMode === "selected";
     const presets = st.attributes.presets || [];
+    const pIcons = st.attributes.preset_icons || {};
+    const pItems = st.attributes.preset_items || {};
+    const pIc = (n) => pIcons[n] || "\u2B50";
+    const escH = esc;
+    if (!presets.includes(this._pSel)) this._pSel = "";
+    const ICONS = ["\u2B50", "\u{1F9F9}", "\u{1F9FD}", "\u{1F4A7}", "\u{1F300}", "\u{1F3E0}", "\u{1F6CB}\uFE0F", "\u{1F6CF}\uFE0F", "\u{1F373}", "\u{1F6BD}", "\u{1F463}", "\u{1F384}", "\u{1F319}", "\u2600\uFE0F", "\u{1F43E}", "\u{1F6AA}", "\u2728", "\u{1F697}", "\u{1F389}", "\u{1F9FA}"];
+    const modeTxt = (i) => i.water === "off" ? "odkurzanie"
+      : i.suction === "off" ? "mopowanie" : "sprz\u0105tanie";
+    const presetInfo = (name) => {
+      const its = name ? (pItems[name] || []) : [];
+      if (!its.length) return "";
+      return `<div class="pinfo-h">${pIc(name)} ${escH(name)} \u00B7 ${its.length} poz.</div><ol class="pinfo-l">` +
+        its.map((i) => `<li>${ric(i.room)}${escH(i.room)} \u2014 ${modeTxt(i)}` +
+          `, ssanie: ${T_SUCTION[i.suction] || i.suction}, mop: ${T_WATER[i.water] || i.water}` +
+          `${i.repeats > 1 ? `, ${i.repeats}\u00D7` : ""}</li>`).join("") + `</ol>`;
+    };
     const prog = st.attributes.progress || { done: 0, total: 0 };
     const etaS = st.attributes.eta_s;
     const vac = st.attributes.vacuum_entity;
@@ -1034,6 +1167,34 @@ class VacuumQueueCard extends HTMLElement {
         .addrow, .actions { display: flex; gap: 8px; margin-top: ${c.compact ? "10px" : "14px"};
                             flex-wrap: wrap; align-items: center; }
         .addrow select { padding: 8px 10px; flex: 1; min-width: 130px; border-radius: 10px; }
+        .addgrid { display: flex; gap: 12px; flex-wrap: wrap; align-items: flex-start; }
+        .chips { display: flex; flex-wrap: wrap; gap: 6px; flex: 2 1 220px; }
+        .chip { border: 1px solid var(--divider-color); border-radius: 999px;
+                padding: ${c.compact ? "5px 11px" : "7px 14px"}; cursor: pointer; font: inherit;
+                background: var(--secondary-background-color); color: var(--primary-text-color); }
+        .chip:hover { filter: brightness(1.1); }
+        .chip.on { background: var(--primary-color); border-color: var(--primary-color);
+                   color: var(--text-primary-color, #fff); font-weight: 600; }
+        .addside { display: flex; flex-direction: column; gap: 8px; flex: 1 1 170px; min-width: 150px; }
+        .addside select { padding: 8px 10px; border-radius: 10px; }
+        .addbtns { display: flex; gap: 8px; flex-wrap: wrap; }
+        .pinfo:empty { display: none; }
+        .pinfo { margin-top: 8px; padding: 8px 12px; border-radius: 10px;
+                 background: var(--secondary-background-color); font-size: .92em; }
+        .pinfo-h { font-weight: 700; margin-bottom: 4px; }
+        .pinfo-l { margin: 0; padding-left: 22px; }
+        .pinfo-l li { margin: 2px 0; }
+        .psave { margin-top: 10px; padding-top: 10px; border-top: 1px dashed var(--divider-color); }
+        .psave-h { font-size: .85em; font-weight: 700; margin-bottom: 8px; color: var(--secondary-text-color); }
+        .psave-icons { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; margin-bottom: 8px; }
+        .psave-icons .chip { padding: 4px 9px; font-size: 1.1em; }
+        .psave-row { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; }
+        .pname-in { flex: 1; min-width: 140px; padding: 8px 10px; border-radius: 10px;
+                    border: 1px solid var(--divider-color); font: inherit;
+                    background: var(--card-background-color); color: var(--primary-text-color); }
+        .picon-in { width: 74px; padding: 6px 8px; border-radius: 10px; font: inherit; text-align: center;
+                    border: 1px solid var(--divider-color);
+                    background: var(--card-background-color); color: var(--primary-text-color); }
         .btn { border: none; border-radius: 10px; padding: ${c.compact ? "7px 12px" : "9px 16px"};
                cursor: pointer; font: inherit; font-weight: 600;
                background: var(--secondary-background-color); color: var(--primary-text-color); }
@@ -1165,24 +1326,31 @@ class VacuumQueueCard extends HTMLElement {
                <button class="btn primary" id="pause" title="Robot zatrzymuje si\u0119 natychmiast w miejscu">\u23F8 Pauza</button>
                ${hasActive ? `<button class="btn" id="finish" title="Robot doko\u0144czy bie\u017C\u0105cy pok\u00F3j, kolejka si\u0119 wstrzyma">\u{1F3C1} Doko\u0144cz pok\u00F3j</button>
                <button class="btn" id="skip">\u23ED Pomi\u0144</button>` : ""}
+               <button class="btn" id="dock" title="Robot wraca do stacji; pok\u00F3j wr\u00F3ci do oczekuj\u0105cych, kolejka si\u0119 wstrzyma">\u{1F3E0} Do bazy</button>
                <button class="btn warn twoclick" id="stop">\u23F9 Stop</button>`;
             if (st.state === "paused") return `
                <button class="btn primary" id="start">\u25B6 Kontynuuj</button>
-               ${hasActive ? `<button class="btn" id="skip">\u23ED Pomi\u0144</button>
-               <button class="btn" id="dock" title="Robot wraca do stacji; pok\u00F3j wr\u00F3ci do oczekuj\u0105cych">\u{1F3E0} Do bazy</button>` : ""}
+               ${hasActive ? `<button class="btn" id="skip">\u23ED Pomi\u0144</button>` : ""}
+               <button class="btn" id="dock" title="Robot wraca do stacji; pok\u00F3j wr\u00F3ci do oczekuj\u0105cych, kolejka si\u0119 wstrzyma">\u{1F3E0} Do bazy</button>
                <button class="btn warn twoclick" id="clear">\u2715 Wyczy\u015B\u0107</button>`;
             return `
                <button class="btn primary" id="start">\u25B6 Start</button>
+               <button class="btn" id="dock" title="Robot wraca do stacji; pok\u00F3j wr\u00F3ci do oczekuj\u0105cych, kolejka si\u0119 wstrzyma">\u{1F3E0} Do bazy</button>
                <button class="btn warn twoclick" id="clear">\u2715 Wyczy\u015B\u0107</button>`;
           })()}
           </div>
         </div>` : ""}
         ${c.show_add_row && !ro ? `<div class="sec">
           <div class="sechd">Dodaj pok\u00F3j</div>
-          <div class="addrow">
-          <select id="addRoom">${rooms.map((r) => `<option value="${esc(r)}">${ric(r)}${esc(r)}</option>`).join("")}</select>
-          <button class="btn" id="add" ${rooms.length ? "" : "disabled"}>+ Dodaj</button>
-          <button class="btn" id="zoneAdd" title="Narysuj jednorazow\u0105 stref\u0119 na mapie">\u25AD W\u0142asna strefa</button>
+          <div class="addgrid">
+            <div class="chips" id="addChips">${rooms.map((r) => `<button type="button" class="chip${this._addSel.has(r) ? " on" : ""}" data-room="${esc(r)}">${ric(r)}${esc(r)}</button>`).join("")}<button type="button" class="chip${this._addSel.has(ZONE_KEY) ? " on" : ""}" data-room="${ZONE_KEY}" title="Narysuj jedn\u0105 lub kilka stref na mapie">\u25AD W\u0142asna strefa</button></div>
+            <div class="addside">
+              <select id="addS">${["", ...SUCTION].map((o) => `<option value="${o}" ${o === this._addS ? "selected" : ""}>Ssanie: ${o ? (T_SUCTION[o] || o) : "domy\u015Blne"}</option>`).join("")}</select>
+              <select id="addW">${["", ...WATER].map((o) => `<option value="${o}" ${o === this._addW ? "selected" : ""}>Mop: ${o ? (T_WATER[o] || o) : "domy\u015Blny"}</option>`).join("")}</select>
+              <div class="addbtns">
+                <button class="btn primary" id="add" ${this._addSel.size ? "" : "disabled"}>+ Dodaj${this._addSel.size ? ` (${this._addSel.size})` : ""}</button>
+              </div>
+            </div>
           </div>
         </div>` : ""}
         ${c.show_bulk_edit && !ro && items.some((i) => i.status === "pending") ? `<div class="sec">
@@ -1202,13 +1370,27 @@ class VacuumQueueCard extends HTMLElement {
           <div class="presets">
           <select id="presetSel" ${presets.length ? "" : "disabled"}>
             ${presets.length
-              ? presets.map((p) => `<option value="${esc(p)}">\u2B50 ${esc(p)}</option>`).join("")
+              ? `<option value="" ${this._pSel === "" ? "selected" : ""}>\u2014 wybierz preset \u2014</option>` +
+                presets.map((p) => `<option value="${escH(p)}" ${p === this._pSel ? "selected" : ""}>${pIc(p)} ${escH(p)}</option>`).join("")
               : `<option>\u2014 brak preset\u00F3w \u2014</option>`}
           </select>
-          <button class="btn" id="pLoad" ${presets.length ? "" : "disabled"} title="Wczytaj preset (zast\u0119puje kolejk\u0119)">\u25B8 Wczytaj</button>
-          <button class="btn" id="pSave" title="Zapisz bie\u017C\u0105c\u0105 kolejk\u0119 jako preset">\uD83D\uDCBE</button>
-          <button class="btn warn" id="pDel" ${presets.length ? "" : "disabled"} title="Usu\u0144 preset">\uD83D\uDDD1</button>
+          <button class="btn" id="pLoad" ${this._pSel ? "" : "disabled"} title="Wczytaj preset (zast\u0119puje kolejk\u0119)">\u25B8 Wczytaj</button>
+          <button class="btn" id="pSave" ${items.length ? "" : "disabled"} title="Zapisz bie\u017C\u0105c\u0105 kolejk\u0119 jako preset">\uD83D\uDCBE</button>
+          <button class="btn" id="pIcon" ${this._pSel ? "" : "disabled"} title="Zmie\u0144 ikon\u0119 wybranego presetu">\u{1F3A8}</button>
+          <button class="btn warn" id="pDel" ${this._pSel ? "" : "disabled"} title="Usu\u0144 preset">\uD83D\uDDD1</button>
           </div>
+          <div class="pinfo" id="pInfo">${presetInfo(this._pSel)}</div>
+          ${this._saveOpen ? `<div class="psave" id="pSaveRow">
+            <div class="psave-h">${this._saveMode === "icon" ? `Ikona presetu \u201E${escH(this._pSel)}\u201D` : "Zapisz bie\u017C\u0105c\u0105 kolejk\u0119 jako preset"}</div>
+            <div class="psave-icons">${ICONS.map((ic) => `<button type="button" class="chip${ic === this._saveIcon ? " on" : ""}" data-icon="${ic}">${ic}</button>`).join("")}
+              <input id="pIconCustom" class="picon-in" maxlength="8" placeholder="w\u0142asna" value="${ICONS.includes(this._saveIcon) ? "" : escH(this._saveIcon)}">
+            </div>
+            <div class="psave-row">
+              ${this._saveMode === "icon" ? "" : `<input id="pName" class="pname-in" placeholder="Nazwa presetu" value="${escH(this._saveName)}">`}
+              <button class="btn primary" id="pSaveOk">${this._saveMode === "icon" ? "Ustaw" : "Zapisz"}</button>
+              <button class="btn" id="pSaveCancel">Anuluj</button>
+            </div>
+          </div>` : ""}
         </div>` : ""}
       </ha-card>`;
 
@@ -1240,8 +1422,38 @@ class VacuumQueueCard extends HTMLElement {
     on("finish", () => this._call("finish_room"));
     arm("stop", () => this._call("stop"));
     arm("clear", () => this._call("clear"));
-    on("add", () => this._call("add", { room: root.getElementById("addRoom").value }));
-    on("zoneAdd", () => this._zoneDialog());
+    const addBtn = root.getElementById("add");
+    const syncAdd = () => {
+      if (!addBtn) return;
+      addBtn.disabled = this._addSel.size === 0;
+      addBtn.textContent = this._addSel.size ? `+ Dodaj (${this._addSel.size})` : "+ Dodaj";
+    };
+    root.querySelectorAll("#addChips .chip").forEach((chip) => {
+      chip.onclick = () => {
+        const r = chip.dataset.room;
+        if (this._addSel.has(r)) this._addSel.delete(r); else this._addSel.add(r);
+        chip.classList.toggle("on", this._addSel.has(r));
+        syncAdd();
+      };
+    });
+    const addS = root.getElementById("addS");
+    const addW = root.getElementById("addW");
+    if (addS) addS.onchange = () => { this._addS = addS.value; };
+    if (addW) addW.onchange = () => { this._addW = addW.value; };
+    on("add", () => {
+      // pokoje trafiaja do kolejki w kolejnosci klikania, z wybranym ssaniem i mopem
+      // (puste = domyslne ustawienia pokoju); „Wlasna strefa" otwiera okno rysowania
+      const data = {};
+      if (this._addS) data.suction = this._addS;
+      if (this._addW) data.water = this._addW;
+      const wantZone = this._addSel.has(ZONE_KEY);
+      [...this._addSel].filter((r) => r !== ZONE_KEY)
+        .forEach((room) => this._call("add", { room, ...data }));
+      this._addSel.clear();
+      root.querySelectorAll("#addChips .chip.on").forEach((c) => c.classList.remove("on"));
+      syncAdd();
+      if (wantZone) this._zoneDialog(data);
+    });
     const setBulkMode = (m) => {
       this._bulkMode = m;
       if (m === "all") this._sel.clear();
@@ -1335,14 +1547,80 @@ class VacuumQueueCard extends HTMLElement {
     });
 
     const psel = root.getElementById("presetSel");
-    on("pLoad", () => psel && this._call("load_preset", { name: psel.value, mode: "replace" }));
+    // zmiana wyboru: tylko stan + przyciski + podglad, bez przebudowy karty
+    if (psel) psel.onchange = () => {
+      this._pSel = psel.value;
+      ["pLoad", "pIcon", "pDel"].forEach((id) => {
+        const b = root.getElementById(id);
+        if (b) b.disabled = !this._pSel;
+      });
+      const info = root.getElementById("pInfo");
+      if (info) {
+        info.innerHTML = presetInfo(this._pSel);
+      }
+      if (this._saveOpen && this._saveMode === "icon") { this._saveOpen = false; this._structKey = null; this._fp = null; this.hass = this._hass; }
+    };
+    on("pLoad", () => {
+      if (!this._pSel) return;
+      this._call("load_preset", { name: this._pSel, mode: "replace" });
+      // po wczytaniu wracamy do pustej opcji
+      this._pSel = "";
+      if (psel) psel.value = "";
+      ["pLoad", "pIcon", "pDel"].forEach((id) => {
+        const b = root.getElementById(id);
+        if (b) b.disabled = true;
+      });
+      const info = root.getElementById("pInfo");
+      if (info) info.innerHTML = "";
+    });
+    const reopen = () => { this._structKey = null; this._fp = null; this.hass = this._hass; };
     on("pSave", () => {
-      const n = prompt("Nazwa presetu:", psel && !psel.disabled ? psel.value : "");
-      if (n && n.trim()) this._call("save_preset", { name: n.trim() });
+      this._saveMode = "new"; this._saveOpen = true;
+      this._saveName = this._pSel || ""; this._saveIcon = this._pSel ? pIc(this._pSel) : "\u2B50";
+      reopen();
+    });
+    on("pIcon", () => {
+      if (!this._pSel) return;
+      this._saveMode = "icon"; this._saveOpen = true; this._saveIcon = pIc(this._pSel);
+      reopen();
+    });
+    on("pSaveCancel", () => { this._saveOpen = false; reopen(); });
+    root.querySelectorAll("#pSaveRow .chip").forEach((chip) => {
+      chip.onclick = () => {
+        this._saveIcon = chip.dataset.icon;
+        root.querySelectorAll("#pSaveRow .chip").forEach((c) => c.classList.toggle("on", c === chip));
+        const ci = root.getElementById("pIconCustom");
+        if (ci) ci.value = "";
+      };
+    });
+    const ci = root.getElementById("pIconCustom");
+    if (ci) ci.oninput = () => {
+      const v = ci.value.trim();
+      if (v) {
+        this._saveIcon = v;
+        root.querySelectorAll("#pSaveRow .chip").forEach((c) => c.classList.remove("on"));
+      }
+    };
+    const pn = root.getElementById("pName");
+    if (pn) pn.oninput = () => { this._saveName = pn.value; };
+    on("pSaveOk", () => {
+      if (this._saveMode === "icon") {
+        if (this._pSel) this._call("set_preset_icon", { name: this._pSel, icon: this._saveIcon });
+      } else {
+        const n = (this._saveName || "").trim();
+        if (!n) { if (pn) pn.focus(); return; }
+        this._call("save_preset", { name: n, icon: this._saveIcon });
+        this._pSel = "";
+        this._saveName = "";
+      }
+      this._saveOpen = false;
+      reopen();
     });
     on("pDel", () => {
-      if (psel && confirm(`Usun\u0105\u0107 preset "${psel.value}"?`))
-        this._call("delete_preset", { name: psel.value });
+      if (psel && this._pSel && confirm(`Usun\u0105\u0107 preset "${this._pSel}"?`)) {
+        this._call("delete_preset", { name: this._pSel });
+        this._pSel = "";
+      }
     });
 
     // ---- przeciaganie za uchwyt: ghost + przerywana ramka ----

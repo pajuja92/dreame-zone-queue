@@ -7,6 +7,9 @@
  * Konfiguracja karty (wszystko ustawialne w wizualnym edytorze Lovelace):
  *   type: custom:vacuum-stats-card
  *   title: Statystyki sprzątania        (opcjonalnie)
+ *   scope: all | rooms | zones          (opcjonalnie — co pokazać: wszystko /
+ *                                        zdefiniowane pokoje / wycinki, czyli
+ *                                        własne strefy; domyślnie all)
  *   columns: [last, dur, pct, ...]      (opcjonalnie — kolumny widoku ogólnego)
  *   detail_columns: [date, time, ...]   (opcjonalnie — kolumny szczegółów)
  *   width: 600px                        (opcjonalnie — max szerokość karty)
@@ -190,9 +193,37 @@ class VacuumStatsCard extends HTMLElement {
     return s;
   }
 
+  // zakres karty: all | rooms | zones
+  _scope() {
+    const s = this._config.scope;
+    return s === "rooms" || s === "zones" ? s : "all";
+  }
+
+  // Wycinek (wlasna strefa) vs zdefiniowany pokoj. Nowe wpisy historii maja
+  // flage `custom`; dla starej historii (bez flagi) wycinek to nazwa, ktorej
+  // nie ma wsrod zdefiniowanych pokoi.
+  _isZone(name) {
+    const runs = (this._history && this._history[name]) || [];
+    if (runs.some((r) => r && r.custom === true)) return true;
+    if (runs.some((r) => r && r.custom === false)) return false;
+    return !(this._rooms || []).includes(name);
+  }
+
+  _inScope(name) {
+    const sc = this._scope();
+    return sc === "all" || (sc === "zones") === this._isZone(name);
+  }
+
+  _titleText() {
+    if (this._config.title) return this._config.title;
+    const sc = this._scope();
+    return "Statystyki sprzątania" +
+      (sc === "rooms" ? " — pokoje" : sc === "zones" ? " — wycinki" : "");
+  }
+
   _render() {
     if (!this.shadowRoot) return;
-    const title = esc(this._config.title || "Statystyki sprzątania");
+    const title = esc(this._titleText());
     const chips = MODE_FILTERS.map(([k, lab]) =>
       `<button class="chip ${this._mode === k ? "on" : ""}" data-mode="${k}">${lab}</button>`
     ).join("");
@@ -257,7 +288,7 @@ class VacuumStatsCard extends HTMLElement {
       <ha-card>
         <div class="hdr">
           ${this._room
-            ? `<button class="back" id="back">‹ Pokoje</button><h2>${esc(this._room)}</h2>`
+            ? `<button class="back" id="back">‹ ${this._scope() === "zones" ? "Wycinki" : this._scope() === "rooms" ? "Pokoje" : "Lista"}</button><h2>${esc(this._room)}</h2>`
             : `<h2>${title}</h2>`}
           ${chips}
           <button class="gear" id="gear" title="wybór kolumn">⚙</button>
@@ -280,22 +311,26 @@ class VacuumStatsCard extends HTMLElement {
 
   _overviewHtml() {
     const cols = this._cols("overview").filter((c) => OVERVIEW_COLS[c]);
+    const sc = this._scope();
     const rooms = [...new Set([...(this._rooms || []),
-                               ...Object.keys(this._history || {})])].sort();
+                               ...Object.keys(this._history || {})])]
+      .filter((n) => this._inScope(n)).sort();
     if (!rooms.length) {
-      return `<div class="empty">Brak danych — historia zbiera się od
-              momentu instalacji tej wersji przy każdym sprzątaniu.</div>`;
+      return `<div class="empty">${sc === "zones"
+        ? "Brak wycinków w historii — pojawią się po pierwszym sprzątaniu własnej strefy."
+        : `Brak danych — historia zbiera się od
+              momentu instalacji tej wersji przy każdym sprzątaniu.`}</div>`;
     }
-    const head = `<tr><th>Pokój</th>${cols.map((c) =>
+    const head = `<tr><th>${sc === "zones" ? "Wycinek" : sc === "rooms" ? "Pokój" : "Pokój / wycinek"}</th>${cols.map((c) =>
       `<th>${OVERVIEW_COLS[c].label}</th>`).join("")}</tr>`;
     const rows = rooms.map((room) => {
       const s = this._roomStats(room);
       return `<tr class="room" data-room="${esc(room)}">
-        <td class="name">${esc(room)} ›</td>
+        <td class="name">${sc === "all" && this._isZone(room) ? "▭ " : ""}${esc(room)} ›</td>
         ${cols.map((c) => `<td>${esc(OVERVIEW_COLS[c].val(s))}</td>`).join("")}</tr>`;
     }).join("");
     return `<div class="tblwrap"><table>${head}${rows}</table></div>
-      <div class="muted">Kliknij pokój, aby zobaczyć wszystkie sprzątania.</div>`;
+      <div class="muted">Kliknij ${sc === "zones" ? "wycinek" : sc === "rooms" ? "pokój" : "pokój lub wycinek (▭)"}, aby zobaczyć wszystkie sprzątania.</div>`;
   }
 
   _detailHtml(room) {
@@ -415,6 +450,14 @@ class VacuumStatsCardEditor extends HTMLElement {
             <option value="1000px">1000 px</option>
           </select>
         </div>
+        <div>
+          <label class="f">Zakres</label>
+          <select id="scope">
+            <option value="all">wszystko (pokoje i wycinki)</option>
+            <option value="rooms">zdefiniowane pokoje</option>
+            <option value="zones">wycinki (własne strefy)</option>
+          </select>
+        </div>
         <label class="chk"><input type="checkbox" id="compact"
           ${c.compact ? "checked" : ""}> Tryb kompaktowy</label>
       </div>
@@ -428,6 +471,12 @@ class VacuumStatsCardEditor extends HTMLElement {
     const r = this.shadowRoot;
     const width = r.getElementById("width");
     width.value = c.width || "";
+    const scope = r.getElementById("scope");
+    scope.value = c.scope === "rooms" || c.scope === "zones" ? c.scope : "all";
+    scope.onchange = (e) => {
+      this._config.scope = e.target.value === "all" ? undefined : e.target.value;
+      this._emit();
+    };
     r.getElementById("title").onchange = (e) => {
       this._config.title = e.target.value || undefined;
       this._emit();

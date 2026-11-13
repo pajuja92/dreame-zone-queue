@@ -4,6 +4,47 @@ Wszystkie istotne zmiany w projekcie. Format oparty o
 [Keep a Changelog](https://keepachangelog.com/pl/1.1.0/),
 wersjonowanie zgodne z [SemVer](https://semver.org/lang/pl/).
 
+## [2.0.0-beta.27] - 2026-11-13
+
+### Dodane
+- **Wycinki w nazwach i statystykach.** Strefa narysowana na mapie dostaje nazwę
+  „<pokój> · strefa", a nazwa wpisana w oknie jest dopisywana w nawiasie
+  („Jadalnia · strefa (Pod stołem)"). Wpisy historii mają flagę `custom`.
+  Karta statystyk ma ustawienie `scope` (`all` / `rooms` / `zones`) — pokoje
+  i wycinki można pokazać na osobnych kartach. Karta historii kolejek podaje
+  „3 pokoje + 2 wycinki" i oznacza wycinki znakiem ▭.
+- **Karta kolejki: „Do bazy" zawsze w Sterowaniu.** Przycisk był tylko w stanie
+  pauzy z aktywnym pokojem; teraz jest też przy bezczynnej i pracującej kolejce.
+- **Karta kolejki: dodawanie wielu pokoi naraz.** Wiersz „Dodaj pokój" to teraz
+  lista pokoi do zaznaczenia (kolejność klikania = kolejność w kolejce) oraz
+  wybór ssania i mopa po prawej; „+ Dodaj (n)" dodaje wszystkie zaznaczone z
+  wybranymi trybami. „domyślne" zostawia ustawienia pokoju. Zaznaczenie i
+  tryby przeżywają odświeżenie karty.
+- **Presety z ikonami.** Każdy preset ma emoji (domyślnie ⭐). `save_preset`
+  przyjmuje opcjonalne `icon` (bez niego zostaje poprzednia ikona), nowy serwis
+  `set_preset_icon` zmienia ikonę bez ruszania zawartości. Sensor wystawia
+  `preset_icons` i `preset_items` (lista nazw w `presets` bez zmian).
+- **Karta kolejki: presety.** Lista startuje z pustą opcją (nie z pierwszym
+  presetem), a „Wczytaj" po użyciu wraca do pustej opcji. Pod listą widać
+  zawartość wybranego presetu (pokój, tryb, ssanie, mop, powtórzenia).
+  Zapis to pole na dole sekcji (nazwa + wybór ikony, także własne emoji)
+  zamiast okna dialogowego; przycisk 🎨 zmienia ikonę istniejącego presetu.
+- **Własna strefa jako ostatnia opcja listy pokoi.** Osobny przycisk zniknął;
+  zaznaczona „▭ Własna strefa" + „Dodaj" otwiera okno rysowania (zaznaczone obok
+  pokoje trafiają od razu do kolejki, a ich ssanie/mop są wartościami startowymi
+  wierszy w oknie).
+- **Okno „Własna strefa": wiele stref naraz.** Tabela wierszy (nazwa, ssanie,
+  mop, powtórzenia): „+" dodaje wiersz (kopiuje ustawienia poprzedniego), „✕"
+  usuwa wiersz (dwuklik, widoczne przy >1 wierszu). Wiersz bez kształtu rysuje
+  się na mapie (prostokąt przeciągnięciem, wielokąt punktami).
+- **Zaznaczanie i edycja stref.** Kliknięcie obszaru na mapie albo wiersza w
+  tabeli zaznacza oba. Zaznaczony prostokąt ma 8 uchwytów (rogi i boki, zmiana
+  prostokątna), wielokąt uchwyt w każdym punkcie; przeciągnięcie wnętrza
+  przesuwa strefę. Wielokąt nadal trafia do kolejki jako prostokąt obejmujący.
+- **Mapa w oknie rysowania: Cmd/Ctrl + scroll = zoom, sam scroll = przesuwanie**
+  (dotyczy też okna kalibracji i panelu „Kalibracja mapy"; bez zoomu scroll
+  przewija okno). Pinch dwoma palcami bez zmian.
+
 ## [2.0.0-beta.26] - 2026-10-13
 
 ### Naprawione

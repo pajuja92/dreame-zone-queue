@@ -85,6 +85,24 @@ save_preset:
       required: true
       example: Piątkowe sprzątanie
       selector: {text: {}}
+    icon:
+      name: Icon
+      description: Emoji shown next to the preset (kept from the previous save when omitted; default ⭐).
+      example: "🧹"
+      selector: {text: {}}
+set_preset_icon:
+  name: Set preset icon
+  description: Changes the emoji of an existing preset without touching its contents.
+  fields:
+    name:
+      name: Preset name
+      required: true
+      selector: {text: {}}
+    icon:
+      name: Icon
+      required: true
+      example: "🧹"
+      selector: {text: {}}
 load_preset:
   name: Load preset
   description: Loads a preset into the queue.

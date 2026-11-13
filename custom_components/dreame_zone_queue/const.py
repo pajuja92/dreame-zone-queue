@@ -1,7 +1,7 @@
 """Constants for Dreame Zone Queue."""
 
 DOMAIN = "dreame_zone_queue"
-VERSION = "2.0.0-beta.26"
+VERSION = "2.0.0-beta.27"
 
 URL_BASE = "/dreame_zone_queue_files"
 CARD_FILENAME = "vacuum-queue-card.js"
@@ -66,6 +66,9 @@ STATUS_ACTIVE = "active"
 STATUS_DONE = "done"
 STATUS_SKIPPED = "skipped"
 STATUS_ERROR = "error"
+
+# domyslna ikona presetu (emoji), gdy nie wybrano innej
+DEFAULT_PRESET_ICON = "\u2B50"
 
 STORAGE_VERSION = 1
 STORAGE_KEY = f"{DOMAIN}.queue"

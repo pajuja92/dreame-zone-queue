@@ -435,7 +435,18 @@ def _register_services(hass: HomeAssistant) -> None:
     hass.services.async_register(
         DOMAIN, "save_preset",
         partial(preset_call, method="async_save_preset"),
-        vol.Schema({vol.Required("name"): cv.string}),
+        vol.Schema({
+            vol.Required("name"): cv.string,
+            vol.Optional("icon"): cv.string,
+        }),
+    )
+    hass.services.async_register(
+        DOMAIN, "set_preset_icon",
+        partial(preset_call, method="async_set_preset_icon"),
+        vol.Schema({
+            vol.Required("name"): cv.string,
+            vol.Required("icon"): cv.string,
+        }),
     )
     hass.services.async_register(
         DOMAIN, "load_preset",

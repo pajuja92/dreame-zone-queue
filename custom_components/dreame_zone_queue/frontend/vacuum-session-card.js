@@ -105,6 +105,19 @@ class VacuumSessionCard extends HTMLElement {
   }
 
   /* przebiegi wybranej sesji + żywy wpis aktywnego pokoju (otwarta sesja) */
+  // „3 pokoje + 2 wycinki" zamiast samego „5 pokoi" (wpisy bez flagi `custom`
+  // — sprzed tej wersji — liczą się jako pokoje)
+  _countText(runs) {
+    const z = runs.filter((r) => r.custom === true).length;
+    const r = runs.length - z;
+    const pl = (n, one, few, many) =>
+      n === 1 ? one : (n % 10 >= 2 && n % 10 <= 4 && (n % 100 < 10 || n % 100 >= 20)) ? few : many;
+    const parts = [];
+    if (r || !z) parts.push(`${r} ${pl(r, "pokój", "pokoje", "pokoi")}`);
+    if (z) parts.push(`${z} ${pl(z, "wycinek", "wycinki", "wycinków")}`);
+    return parts.join(" + ");
+  }
+
   _runs(sess, isNewest) {
     const runs = (sess.runs || []).slice();
     if (isNewest && sess.ended == null && this._current) {
@@ -133,7 +146,7 @@ class VacuumSessionCard extends HTMLElement {
       const when = `${fmtD(s.started)} ${fmtT(s.started)}`;
       const state = s.ended == null ? " · w trakcie" : "";
       return `<option value="${i}" ${i === this._idx ? "selected" : ""}>
-        ${when} · ${(s.runs || []).length} pokoi${state}</option>`;
+        ${when} · ${this._countText(s.runs || [])}${state}</option>`;
     }).join("");
 
     const compact = !!this._config.compact;
@@ -264,12 +277,12 @@ class VacuumSessionCard extends HTMLElement {
       ].filter(Boolean).join(" · ");
       return `<tr>
         <td class="num">${i + 1}</td>
-        <td><b>${esc(run.room)}</b><br><span class="sub">${details}</span></td>
+        <td><b>${run.custom === true ? "▭ " : ""}${esc(run.room)}</b><br><span class="sub">${details}</span></td>
         <td class="st" style="color:${o.color}">${o.label}</td>
       </tr>`;
     }).join("");
     const done = runs.filter((r) => r.outcome === "done").length;
-    const sum = `${done}/${runs.length} pokoi posprzątanych` +
+    const sum = `${done}/${runs.length} posprzątanych (${this._countText(runs)})` +
       (sess.ended != null && runs.length
         ? ` · łącznie ${fmtMin(sess.ended - sess.started)}` : "");
 

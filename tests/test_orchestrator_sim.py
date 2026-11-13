@@ -1362,6 +1362,36 @@ async def test_direct_off_keeps_dock_return():
     assert m.queue[0]["status"] == "active" and len(zone_calls(hass)) == 1
 
 
+async def test_preset_icons_save_set_delete_and_snapshot():
+    hass, m = mk()
+    await m.async_setup()
+    await m.async_add("Salon", "standard", "off", 1)
+    await m.async_add("Kuchnia", "off", "wet", 2)
+    await m.async_save_preset("Piatek", "\U0001F9F9")
+    snap = m.snapshot
+    assert snap["preset_icons"]["Piatek"] == "\U0001F9F9"
+    assert [i["room"] for i in snap["preset_items"]["Piatek"]] == ["Salon", "Kuchnia"]
+    assert snap["preset_items"]["Piatek"][1] == {"room": "Kuchnia", "suction": "off",
+                                                   "water": "wet", "repeats": 2}
+    # ponowny zapis bez ikony zachowuje dotychczasowa; nowy preset dostaje domyslna
+    await m.async_save_preset("Piatek")
+    assert m.snapshot["preset_icons"]["Piatek"] == "\U0001F9F9"
+    await m.async_save_preset("Inny")
+    assert m.snapshot["preset_icons"]["Inny"] == const.DEFAULT_PRESET_ICON
+    # zmiana ikony nie rusza zawartosci; nieznany preset jest ignorowany
+    before = m.snapshot["preset_items"]["Piatek"]
+    await m.async_set_preset_icon("Piatek", "\U0001F319")
+    await m.async_set_preset_icon("Nie ma", "x")
+    assert m.snapshot["preset_icons"]["Piatek"] == "\U0001F319"
+    assert m.snapshot["preset_items"]["Piatek"] == before
+    assert "Nie ma" not in m.snapshot["preset_icons"]
+    # stary preset zapisany bez ikon (sprzed zmiany) dostaje domyslna w snapshocie
+    m.presets["Stary"] = [{"room": "Salon", "suction": "standard", "water": "off", "repeats": 1}]
+    assert m.snapshot["preset_icons"]["Stary"] == const.DEFAULT_PRESET_ICON
+    await m.async_delete_preset("Piatek")
+    assert "Piatek" not in m.snapshot["preset_icons"] and "Piatek" not in m.presets
+
+
 SCENARIOS = [v for k, v in sorted(globals().items()) if k.startswith("test_")]
 
 

@@ -3,8 +3,8 @@
  *
  *  · prostokąt: przeciągnięcie jednym palcem / myszą,
  *  · wielokąt: dodawanie punktów tapnięciami (min. 3), finish() kończy,
- *  · zoom: kółko myszy ORAZ pinch dwoma palcami; dwa palce też przesuwają
- *    mapę — dzięki temu na telefonie da się rysować precyzyjnie,
+ *  · zoom: Cmd/Ctrl + scroll ORAZ pinch dwoma palcami; sam scroll i dwa
+ *    palce przesuwają mapę — dzięki temu na telefonie da się rysować precyzyjnie,
  *  · współrzędne oddawane w px WYŚWIETLANEGO obrazu (przestrzeń bez
  *    zoomu) — przeliczenie na naturalne px/mm należy do wywołującego.
  *
@@ -81,10 +81,20 @@ export function attachDraw(zwrap, img, svg, cb) {
     svg.innerHTML = html;
   }
 
+  // Cmd/Ctrl + scroll (Ctrl = gest pinch na gladziku) = zoom; sam scroll =
+  // przesuwanie powiekszonej mapy (bez zoomu przewija okno jak zwykle).
   zwrap.addEventListener("wheel", (e) => {
-    e.preventDefault();
-    const b = zwrap.getBoundingClientRect();
-    zoomAt(e.clientX - b.left, e.clientY - b.top, e.deltaY < 0 ? 1.2 : 1 / 1.2);
+    if (e.metaKey || e.ctrlKey) {
+      e.preventDefault();
+      const b = zwrap.getBoundingClientRect();
+      zoomAt(e.clientX - b.left, e.clientY - b.top, e.deltaY < 0 ? 1.2 : 1 / 1.2);
+    } else if (st.scale > 1) {
+      e.preventDefault();
+      st.tx -= e.deltaX;
+      st.ty -= e.deltaY;
+      clampView();
+      apply();
+    }
   }, { passive: false });
 
   zwrap.addEventListener("pointerdown", (e) => {
@@ -241,4 +251,336 @@ export function roomOf(zone, roomZones) {
  * niż precyzyjne przeciąganie), na desktopie prostokąt. */
 export function defaultMode() {
   return matchMedia("(pointer: coarse)").matches ? "poly" : "rect";
+}
+
+/* ===========================================================================
+ * Edytor wielu stref (okno „Własna strefa").
+ *
+ * Model: tablica `shapes` równoległa do wierszy tabeli w oknie; element to
+ * null (wiersz jeszcze bez kształtu) albo {kind:"rect"|"poly", pts}. Prostokąt
+ * trzyma pts = [[L,T],[R,B]], wielokąt listę wierzchołków; wszystko w px
+ * WYŚWIETLANEGO obrazu (przestrzeń bez zoomu).
+ *
+ *  · rysować można tylko dla zaznaczonego wiersza bez kształtu,
+ *  · kliknięcie obszaru innej strefy zaznacza ją (cb.select),
+ *  · zaznaczoną strefę edytujesz: prostokąt — 8 uchwytów (rogi i boki, zmiana
+ *    prostokątna), wielokąt — uchwyt w każdym punkcie; przeciągnięcie wnętrza
+ *    przesuwa całość,
+ *  · zoom/pan jak w attachDraw (Cmd/Ctrl + scroll = zoom, scroll = przesuwanie,
+ *    pinch dwoma palcami).
+ *
+ * attachZoneEditor(zwrap, img, svg, cb) -> {setMode, getMode, addRow,
+ *   removeRow, select, getSelected, clearSelected, undoPoint, finishPoly,
+ *   pendingCount, shapes}
+ *  cb.change(idx)      — kształt wiersza idx powstał lub został zmieniony
+ *  cb.select(idx)      — użytkownik zaznaczył strefę na mapie
+ *  cb.progress(n)      — liczba punktów rysowanego wielokąta
+ * ========================================================================= */
+export const ZONE_COLORS = ["#ffb84d", "#4dc3ff", "#8be08b", "#ff7ab6", "#c39bff", "#ffd84d"];
+
+export function attachZoneEditor(zwrap, img, svg, cb) {
+  const st = {
+    mode: "rect",
+    shapes: [null],   // jeden pusty wiersz na start
+    sel: 0,
+    pend: [],         // punkty rysowanego (jeszcze niezamkniętego) wielokąta
+    draft: null,      // [L,T,W,H] szkic rysowanego prostokąta
+    start: null,      // początek rysowania prostokąta
+    drag: null,       // {type:"handle"|"move", idx, h, from, orig}
+    scale: 1, tx: 0, ty: 0,
+    ptrs: new Map(),
+    pinched: false,
+  };
+  const colOf = (i) => ZONE_COLORS[i % ZONE_COLORS.length];
+
+  img.style.transformOrigin = "0 0";
+  svg.style.transformOrigin = "0 0";
+  const apply = () => {
+    const t = `translate(${st.tx}px,${st.ty}px) scale(${st.scale})`;
+    img.style.transform = t;
+    svg.style.transform = t;
+    redraw();
+  };
+  const W = () => img.clientWidth, H = () => img.clientHeight;
+  const imgPos = (e) => {
+    const r = zwrap.getBoundingClientRect();
+    const x = (e.clientX - r.left - st.tx) / st.scale;
+    const y = (e.clientY - r.top - st.ty) / st.scale;
+    return [Math.max(0, Math.min(x, W())), Math.max(0, Math.min(y, H()))];
+  };
+  const clampView = () => {
+    st.scale = Math.max(1, Math.min(8, st.scale));
+    st.tx = Math.min(0, Math.max(st.tx, W() - W() * st.scale));
+    st.ty = Math.min(0, Math.max(st.ty, H() - H() * st.scale));
+  };
+  const zoomAt = (cx, cy, f) => {
+    const ns = Math.max(1, Math.min(8, st.scale * f));
+    st.tx = cx - (cx - st.tx) * (ns / st.scale);
+    st.ty = cy - (cy - st.ty) * (ns / st.scale);
+    st.scale = ns;
+    clampView();
+    apply();
+  };
+
+  // ---- geometria
+  const corners = (s) => {
+    if (s.kind !== "rect") return s.pts;
+    const [[L, T], [R, B]] = s.pts;
+    return [[L, T], [R, T], [R, B], [L, B]];
+  };
+  const rectHandles = (s) => {
+    const [[L, T], [R, B]] = s.pts;
+    const mx = (L + R) / 2, my = (T + B) / 2;
+    return { nw: [L, T], n: [mx, T], ne: [R, T], e: [R, my],
+             se: [R, B], s: [mx, B], sw: [L, B], w: [L, my] };
+  };
+  const inPoly = (p, poly) => {
+    let c = false;
+    for (let i = 0, j = poly.length - 1; i < poly.length; j = i++) {
+      const [xi, yi] = poly[i], [xj, yj] = poly[j];
+      if ((yi > p[1]) !== (yj > p[1]) &&
+          p[0] < ((xj - xi) * (p[1] - yi)) / (yj - yi) + xi) c = !c;
+    }
+    return c;
+  };
+  const area = (s) => {
+    const c = corners(s);
+    let a = 0;
+    for (let i = 0, j = c.length - 1; i < c.length; j = i++)
+      a += (c[j][0] + c[i][0]) * (c[j][1] - c[i][1]);
+    return Math.abs(a / 2);
+  };
+  const bodyAt = (p) => {
+    let best = -1, bestA = Infinity;
+    st.shapes.forEach((s, i) => {
+      if (!s || !inPoly(p, corners(s))) return;
+      const a = area(s);
+      if (a < bestA) { best = i; bestA = a; }
+    });
+    return best;
+  };
+  const hitR = () => (matchMedia("(pointer: coarse)").matches ? 20 : 12) / st.scale;
+  const handleAt = (p) => {
+    const s = st.shapes[st.sel];
+    if (!s) return null;
+    const r = hitR();
+    const hs = s.kind === "rect" ? rectHandles(s)
+      : Object.fromEntries(s.pts.map((q, i) => [String(i), q]));
+    let best = null, bd = r;
+    for (const [k, q] of Object.entries(hs)) {
+      const d = Math.hypot(q[0] - p[0], q[1] - p[1]);
+      if (d <= bd) { best = k; bd = d; }
+    }
+    return best;
+  };
+  const clampPt = (x, y) => [Math.max(0, Math.min(x, W())), Math.max(0, Math.min(y, H()))];
+
+  function redraw() {
+    const sw = 2 / st.scale, r = 7 / st.scale;
+    let html = "";
+    st.shapes.forEach((s, i) => {
+      if (!s) return;
+      const on = i === st.sel, c = colOf(i);
+      const pts = corners(s).map((q) => q.join(",")).join(" ");
+      html += `<polygon points="${pts}" fill="${c}" fill-opacity="${on ? 0.28 : 0.14}"
+        stroke="${c}" stroke-width="${on ? sw * 1.6 : sw}" stroke-opacity="${on ? 1 : 0.7}"
+        stroke-linejoin="round"${on ? "" : ` stroke-dasharray="${5 / st.scale} ${4 / st.scale}"`}/>`;
+      const cs = corners(s);
+      const cx = cs.reduce((a, q) => a + q[0], 0) / cs.length;
+      const cy = cs.reduce((a, q) => a + q[1], 0) / cs.length;
+      html += `<circle cx="${cx}" cy="${cy}" r="${11 / st.scale}" fill="${c}" fill-opacity=".95"/>
+        <text x="${cx}" y="${cy}" fill="#1a1206" font-size="${13 / st.scale}" font-weight="700"
+        text-anchor="middle" dominant-baseline="central">${i + 1}</text>`;
+    });
+    const s = st.shapes[st.sel];
+    if (s) {
+      const hs = s.kind === "rect" ? Object.values(rectHandles(s)) : s.pts;
+      html += hs.map((q) => `<circle cx="${q[0]}" cy="${q[1]}" r="${r}" fill="#fff"
+        stroke="${colOf(st.sel)}" stroke-width="${2 / st.scale}"/>`).join("");
+    }
+    if (st.draft) {
+      const d = st.draft;
+      html += `<rect x="${d[0]}" y="${d[1]}" width="${d[2]}" height="${d[3]}"
+        fill="${colOf(st.sel)}" fill-opacity=".2" stroke="${colOf(st.sel)}" stroke-width="${sw}"
+        stroke-dasharray="${5 / st.scale} ${4 / st.scale}" rx="${3 / st.scale}"/>`;
+    }
+    if (st.pend.length) {
+      const ptStr = st.pend.map((q) => q.join(",")).join(" ");
+      html += st.pend.length > 2
+        ? `<polygon points="${ptStr}" fill="${colOf(st.sel)}" fill-opacity=".2" stroke="${colOf(st.sel)}" stroke-width="${sw}"/>`
+        : `<polyline points="${ptStr}" fill="none" stroke="${colOf(st.sel)}" stroke-width="${sw}"/>`;
+      html += st.pend.map((q) => `<circle cx="${q[0]}" cy="${q[1]}" r="${r}"
+        fill="${colOf(st.sel)}" stroke="#1a1206" stroke-width="${1.5 / st.scale}"/>`).join("");
+    }
+    svg.innerHTML = html;
+  }
+
+  const setRect = (idx, a, b) => {
+    const L = Math.min(a[0], b[0]), R = Math.max(a[0], b[0]);
+    const T = Math.min(a[1], b[1]), B = Math.max(a[1], b[1]);
+    st.shapes[idx] = { kind: "rect", pts: [[L, T], [R, B]] };
+  };
+  const applyHandle = (idx, h, p) => {
+    const s = st.shapes[idx];
+    const [x, y] = clampPt(p[0], p[1]);
+    if (s.kind === "poly") { s.pts[Number(h)] = [x, y]; return; }
+    let [[L, T], [R, B]] = s.pts;
+    if (h.includes("w")) L = x;
+    if (h.includes("e")) R = x;
+    if (h.includes("n")) T = y;
+    if (h.includes("s")) B = y;
+    setRect(idx, [L, T], [R, B]);
+  };
+  const moveShape = (idx, orig, dx, dy) => {
+    const xs = orig.pts.map((q) => q[0]), ys = orig.pts.map((q) => q[1]);
+    const ddx = Math.max(-Math.min(...xs), Math.min(dx, W() - Math.max(...xs)));
+    const ddy = Math.max(-Math.min(...ys), Math.min(dy, H() - Math.max(...ys)));
+    st.shapes[idx] = { kind: orig.kind, pts: orig.pts.map((q) => [q[0] + ddx, q[1] + ddy]) };
+  };
+  const emptySel = () => st.sel >= 0 && !st.shapes[st.sel];
+
+  // Cmd/Ctrl + scroll (Ctrl = gest pinch na gladziku) = zoom; sam scroll =
+  // przesuwanie powiekszonej mapy (bez zoomu przewija okno jak zwykle).
+  zwrap.addEventListener("wheel", (e) => {
+    if (e.metaKey || e.ctrlKey) {
+      e.preventDefault();
+      const b = zwrap.getBoundingClientRect();
+      zoomAt(e.clientX - b.left, e.clientY - b.top, e.deltaY < 0 ? 1.2 : 1 / 1.2);
+    } else if (st.scale > 1) {
+      e.preventDefault();
+      st.tx -= e.deltaX;
+      st.ty -= e.deltaY;
+      clampView();
+      apply();
+    }
+  }, { passive: false });
+
+  zwrap.addEventListener("pointerdown", (e) => {
+    e.preventDefault();
+    zwrap.setPointerCapture(e.pointerId);
+    st.ptrs.set(e.pointerId, [e.clientX, e.clientY]);
+    if (st.ptrs.size === 2) {         // dwa palce = zoom/pan, nie edycja
+      st.pinched = true; st.start = null; st.draft = null; st.drag = null;
+      redraw();
+      return;
+    }
+    if (st.ptrs.size !== 1) return;
+    const p = imgPos(e);
+    st.down = p;
+    if (st.pend.length) return;       // trwa rysowanie wielokąta: tap = punkt
+    const h = handleAt(p);
+    if (h !== null) {
+      st.drag = { type: "handle", idx: st.sel, h };
+      return;
+    }
+    const b = bodyAt(p);
+    if (b >= 0) {
+      if (b !== st.sel) { st.sel = b; if (cb.select) cb.select(b); redraw(); }
+      st.drag = { type: "move", idx: b, from: p,
+                  orig: JSON.parse(JSON.stringify(st.shapes[b])), moved: false };
+      return;
+    }
+    if (emptySel() && st.mode === "rect") st.start = p;
+  });
+
+  zwrap.addEventListener("pointermove", (e) => {
+    if (st.ptrs.has(e.pointerId)) {
+      const prev = [...st.ptrs.values()];
+      st.ptrs.set(e.pointerId, [e.clientX, e.clientY]);
+      if (st.ptrs.size === 2) {
+        const cur = [...st.ptrs.values()];
+        const dist = (a) => Math.hypot(a[0][0] - a[1][0], a[0][1] - a[1][1]);
+        const mid = (a) => [(a[0][0] + a[1][0]) / 2, (a[0][1] + a[1][1]) / 2];
+        const b = zwrap.getBoundingClientRect();
+        const m0 = mid(prev), m1 = mid(cur);
+        st.tx += m1[0] - m0[0];
+        st.ty += m1[1] - m0[1];
+        const d0 = dist(prev), d1 = dist(cur);
+        if (d0 > 12) zoomAt(m1[0] - b.left, m1[1] - b.top, d1 / d0);
+        else { clampView(); apply(); }
+        return;
+      }
+    }
+    if (!st.ptrs.size) return;
+    const p = imgPos(e);
+    if (st.drag) {
+      if (st.drag.type === "handle") applyHandle(st.drag.idx, st.drag.h, p);
+      else {
+        const dx = p[0] - st.drag.from[0], dy = p[1] - st.drag.from[1];
+        if (Math.hypot(dx, dy) * st.scale > 3) st.drag.moved = true;
+        if (st.drag.moved) moveShape(st.drag.idx, st.drag.orig, dx, dy);
+      }
+      redraw();
+    } else if (st.start) {
+      st.draft = [Math.min(st.start[0], p[0]), Math.min(st.start[1], p[1]),
+                  Math.abs(p[0] - st.start[0]), Math.abs(p[1] - st.start[1])];
+      redraw();
+    }
+  });
+
+  const endPtr = (e) => {
+    const had = st.ptrs.delete(e.pointerId);
+    const wasPinch = st.pinched;
+    if (st.ptrs.size === 0) st.pinched = false;
+    if (!had || wasPinch || e.type === "pointercancel") {
+      st.start = null; st.draft = null; st.drag = null; redraw();
+      return;
+    }
+    const p = imgPos(e);
+    if (st.drag) {
+      const d = st.drag;
+      st.drag = null;
+      if (d.type === "handle" || d.moved) { if (cb.change) cb.change(d.idx); }
+      redraw();
+      return;
+    }
+    if (st.start && st.mode === "rect") {
+      const a = st.start;
+      st.start = null; st.draft = null;
+      if (Math.abs(p[0] - a[0]) >= 8 && Math.abs(p[1] - a[1]) >= 8) {
+        setRect(st.sel, a, p);
+        redraw();
+        if (cb.change) cb.change(st.sel);
+      } else redraw();
+      return;
+    }
+    if (st.mode === "poly" && emptySel() && !st.drag) {
+      st.pend.push(p);
+      redraw();
+      if (cb.progress) cb.progress(st.pend.length);
+    }
+  };
+  zwrap.addEventListener("pointerup", endPtr);
+  zwrap.addEventListener("pointercancel", endPtr);
+
+  const resetPend = () => {
+    st.pend = []; st.draft = null; st.start = null;
+    if (cb.progress) cb.progress(0);
+  };
+  return {
+    setMode(m) { st.mode = m; resetPend(); redraw(); },
+    getMode: () => st.mode,
+    addRow() { st.shapes.push(null); st.sel = st.shapes.length - 1; resetPend(); redraw(); return st.sel; },
+    removeRow(i) {
+      st.shapes.splice(i, 1);
+      if (!st.shapes.length) st.shapes.push(null);
+      st.sel = Math.min(st.sel > i ? st.sel - 1 : st.sel, st.shapes.length - 1);
+      resetPend(); redraw();
+      return st.sel;
+    },
+    select(i) { st.sel = i; resetPend(); redraw(); },
+    getSelected: () => st.sel,
+    clearSelected() { if (st.sel >= 0) st.shapes[st.sel] = null; resetPend(); redraw(); },
+    undoPoint() { if (st.pend.length) { st.pend.pop(); redraw(); if (cb.progress) cb.progress(st.pend.length); } },
+    finishPoly() {
+      if (st.pend.length < 3 || !emptySel()) return false;
+      st.shapes[st.sel] = { kind: "poly", pts: st.pend.slice() };
+      resetPend(); redraw();
+      if (cb.change) cb.change(st.sel);
+      return true;
+    },
+    pendingCount: () => st.pend.length,
+    shapes: () => st.shapes,
+    redraw,
+  };
 }

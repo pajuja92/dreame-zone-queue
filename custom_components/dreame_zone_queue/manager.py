@@ -14,6 +14,7 @@ from homeassistant.helpers.event import async_call_later, async_track_state_chan
 from homeassistant.helpers.storage import Store
 
 from .const import (
+    DEFAULT_PRESET_ICON,
     CANCEL_AREA_RATIO,
     CANCEL_REVERT_WINDOW_S,
     CONF_DELAY_BETWEEN_S,
@@ -87,6 +88,7 @@ class QueueManager:
         self._dispatched_at: float = 0.0
         self._revision: int = 0
         self.presets: dict[str, list] = {}
+        self.preset_icons: dict[str, str] = {}  # nazwa presetu -> emoji
         self.stats: dict[str, dict] = {}
         # historia przebiegów per pokoj (karta statystyk)
         self.history: dict[str, list] = {}
@@ -202,6 +204,7 @@ class QueueManager:
         self.queue = data.get("queue", [])
         self._next_id = data.get("next_id", 1)
         self.presets = data.get("presets", {})
+        self.preset_icons = data.get("preset_icons", {})
         self.stats = data.get("stats", {})
         self.history = data.get("history", {})
         self.map_calib = data.get("map_calib")
@@ -280,6 +283,7 @@ class QueueManager:
                 "queue": self.queue,
                 "next_id": self._next_id,
                 "presets": self.presets,
+                "preset_icons": self.preset_icons,
                 "stats": self.stats,
                 "history": self.history,
                 "map_calib": self.map_calib,
@@ -960,7 +964,7 @@ class QueueManager:
     # ------------------------------------------------------------------
     # presets
     # ------------------------------------------------------------------
-    async def async_save_preset(self, name: str) -> None:
+    async def async_save_preset(self, name: str, icon: str | None = None) -> None:
         name = (name or "").strip()
         if not name:
             _LOGGER.error("Preset name is required")
@@ -973,7 +977,20 @@ class QueueManager:
              "water": i["water"], "repeats": i["repeats"]}
             for i in self.queue
         ]
+        icon = (icon or "").strip()
+        if icon:
+            self.preset_icons[name] = icon
+        elif name not in self.preset_icons:
+            self.preset_icons[name] = DEFAULT_PRESET_ICON
         _LOGGER.info("Preset '%s' saved (%d rooms)", name, len(self.queue))
+        self._notify()
+
+    async def async_set_preset_icon(self, name: str, icon: str) -> None:
+        if name not in self.presets:
+            _LOGGER.error("Unknown preset '%s'", name)
+            return
+        icon = (icon or "").strip() or DEFAULT_PRESET_ICON
+        self.preset_icons[name] = icon
         self._notify()
 
     async def async_load_preset(self, name: str, mode: str = "replace") -> None:
@@ -1008,6 +1025,7 @@ class QueueManager:
         self._notify()
 
     async def async_delete_preset(self, name: str) -> None:
+        self.preset_icons.pop(name, None)
         if self.presets.pop(name, None) is not None:
             self._notify()
 
@@ -1606,6 +1624,7 @@ class QueueManager:
         entry = {
             "ts": round(started),
             "dur": round(time.time() - started),
+            "custom": bool(item.get("custom")),  # wycinek (strefa), nie zdefiniowany pokoj
             "pct": pct,
             "suction": item.get("suction"),
             "water": item.get("water"),
@@ -2240,6 +2259,10 @@ class QueueManager:
             "progress": {"done": finished, "total": len(self.queue)},
             "eta_s": self._eta_seconds(),
             "presets": sorted(self.presets.keys()),
+            "preset_icons": {n: self.preset_icons.get(n, DEFAULT_PRESET_ICON)
+                             for n in self.presets},
+            "preset_items": {n: [dict(i) for i in items]
+                             for n, items in self.presets.items()},
             "items": [{**i, "zone": list(i["zone"]), "est_s": _est(i)}
                       for i in self.queue],
             "rooms": sorted(self.rooms.keys()),
