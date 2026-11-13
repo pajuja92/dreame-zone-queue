@@ -488,6 +488,7 @@ class VacuumQueueCard extends HTMLElement {
     const renderCalib = (note) => {
       phase++;
       box.style.border = `3px solid ${CAL}`;
+      box.style.width = "min(760px,100%)";
       // reczna kalibracja niemozliwa (brak pokoi / backend da 403 nie-adminowi):
       // pokaz mape — jej pobranie wyzwala calibration_points kamery
       const blocked = !roomNames.length
@@ -652,6 +653,7 @@ class VacuumQueueCard extends HTMLElement {
     const renderDraw = () => {
       phase++;
       box.style.border = "";
+      box.style.width = "min(1180px,100%)";
       box.innerHTML = `
         <h3 style="margin:0;font-size:1.05em;display:flex;align-items:center;gap:8px">
           ▭ Własna strefa — narysuj na mapie
@@ -673,13 +675,15 @@ class VacuumQueueCard extends HTMLElement {
           <button data-x="mrect" style="${btnOn}">▭ Prostokąt</button>
           <button data-x="mpoly" style="${btnOff}">△ Wielokąt</button>
           <button data-x="mundo" style="${btnOff};display:none">↩ Cofnij punkt</button>
-          <button data-x="mdone" style="${btnOff};display:none">✓ Zakończ kształt</button>
           <button data-x="mclear" style="${btnOff}">Wyczyść strefę</button>
           <span class="zhint" style="color:var(--secondary-text-color)"></span>
         </div>
-        ${mapBlock}
         <div class="zinfo" style="font-size:.9em;color:var(--secondary-text-color)"></div>
-        <div class="zrows" style="display:flex;flex-direction:column;gap:8px"></div>
+        <div style="display:flex;gap:12px;align-items:flex-start;flex-wrap:wrap">
+          <div style="flex:1 1 440px;min-width:0">${mapBlock}</div>
+          <div class="zrows" style="flex:0 1 400px;min-width:min(100%,300px);max-height:62vh;overflow-y:auto;
+            display:flex;flex-direction:column;gap:8px;padding-right:2px"></div>
+        </div>
         <div style="display:flex;justify-content:flex-end;gap:8px">
           <button data-x="close" style="${btnOff}">Anuluj</button>
           <button data-x="ok" disabled style="${btnCss}font-weight:600;background:var(--primary-color,#03a9f4);color:#fff;opacity:.5">+ Dodaj do kolejki</button>
@@ -695,7 +699,6 @@ class VacuumQueueCard extends HTMLElement {
       const info = box.querySelector(".zinfo");
       const hint = box.querySelector(".zhint");
       const okBtn = box.querySelector('[data-x="ok"]');
-      const doneBtn = box.querySelector('[data-x="mdone"]');
       const mrect = box.querySelector('[data-x="mrect"]');
       const mpoly = box.querySelector('[data-x="mpoly"]');
       const undoBtn = box.querySelector('[data-x="mundo"]');
@@ -768,7 +771,7 @@ class VacuumQueueCard extends HTMLElement {
           ? "Przeciągnij uchwyty, by zmienić kształt; wnętrze przesuwa strefę."
           : m === "rect"
             ? "Przeciągnij prostokąt po mapie."
-            : "Tapnij narożniki (min. 3), potem „Zakończ kształt”.") +
+            : "Tapnij narożniki (min. 3) — kształt powstaje po trzecim punkcie, dalsze tapnięcia dodają punkty.") +
           " Cmd + scroll = zoom, scroll = przesuwanie.";
       };
       const selectRow = (i) => {
@@ -782,18 +785,19 @@ class VacuumQueueCard extends HTMLElement {
             border:2px solid var(--divider-color,#444);border-radius:12px;padding:8px;cursor:pointer">
             <span style="width:24px;height:24px;border-radius:50%;flex:none;display:flex;align-items:center;
               justify-content:center;font-weight:700;color:#1a1206;background:${ZONE_COLORS[i % ZONE_COLORS.length]}">${i + 1}</span>
-            <div style="flex:1;min-width:150px;display:flex;flex-direction:column;gap:2px">
-              <input class="zname" data-f="name" placeholder="Nazwa (np. Pod stołem)" value="${esc(r.name)}" style="${selCss}">
-              <span class="zri" style="font-size:.78em;color:var(--secondary-text-color)"></span>
-            </div>
-            <select data-f="suction" style="${selCss}">${SUCTION.map((o) =>
-              `<option value="${o}" ${o === r.suction ? "selected" : ""}>Ssanie: ${T_SUCTION[o] || o}</option>`).join("")}</select>
-            <select data-f="water" style="${selCss}">${WATER.map((o) =>
-              `<option value="${o}" ${o === r.water ? "selected" : ""}>Mop: ${T_WATER[o] || o}</option>`).join("")}</select>
-            <select data-f="repeats" style="${selCss}">${REPEATS.map((o) =>
-              `<option value="${o}" ${o === r.repeats ? "selected" : ""}>${o}×</option>`).join("")}</select>
+            <input class="zname" data-f="name" placeholder="Nazwa (np. Pod stołem)" value="${esc(r.name)}"
+              style="${selCss};flex:1 1 120px;min-width:0">
             ${rows.length > 1 ? `<button data-x="del" title="Usuń strefę (kliknij dwa razy)" style="${btnOff};padding:6px 12px">✕</button>` : ""}
             ${i === rows.length - 1 ? `<button data-x="add" title="Dodaj kolejną strefę" style="${btnOn};padding:6px 14px;font-weight:700">+</button>` : ""}
+            <div style="flex:1 0 100%;display:flex;gap:6px">
+              <select data-f="suction" style="${selCss};flex:1 1 0;min-width:0">${SUCTION.map((o) =>
+                `<option value="${o}" ${o === r.suction ? "selected" : ""}>Ssanie: ${T_SUCTION[o] || o}</option>`).join("")}</select>
+              <select data-f="water" style="${selCss};flex:1 1 0;min-width:0">${WATER.map((o) =>
+                `<option value="${o}" ${o === r.water ? "selected" : ""}>Mop: ${T_WATER[o] || o}</option>`).join("")}</select>
+              <select data-f="repeats" style="${selCss};flex:0 0 auto">${REPEATS.map((o) =>
+                `<option value="${o}" ${o === r.repeats ? "selected" : ""}>${o}×</option>`).join("")}</select>
+            </div>
+            <span class="zri" style="flex:1 0 100%;font-size:.78em;color:var(--secondary-text-color)"></span>
           </div>`).join("");
         rowsEl.querySelectorAll(".zrow").forEach((el) => {
           const i = Number(el.dataset.i);
@@ -855,7 +859,6 @@ class VacuumQueueCard extends HTMLElement {
         ed.setMode(m);
         mrect.style.cssText = m === "rect" ? btnOn : btnOff;
         mpoly.style.cssText = m === "poly" ? btnOn : btnOff;
-        doneBtn.style.display = m === "poly" ? "" : "none";
         undoBtn.style.display = m === "poly" ? "" : "none";
         info.textContent = "";
         updateHint();
@@ -863,18 +866,12 @@ class VacuumQueueCard extends HTMLElement {
       mrect.onclick = () => setMode("rect");
       mpoly.onclick = () => setMode("poly");
       undoBtn.onclick = () => ed.undoPoint();
-      doneBtn.onclick = () => {
-        if (!ed.finishPoly()) info.textContent = "⚠ Wielokąt wymaga min. 3 punktów (i zaznaczonej strefy bez kształtu).";
-      };
       box.querySelector('[data-x="mclear"]').onclick = () => {
         ed.clearSelected();
         info.textContent = "";
         refreshRows();
         updateHint();
       };
-      zwrap.addEventListener("dblclick", () => {
-        if (ed.getMode() === "poly") doneBtn.onclick();
-      });
       renderRows();
       setMode(defaultMode());
 
@@ -1169,12 +1166,13 @@ class VacuumQueueCard extends HTMLElement {
         .addrow select { padding: 8px 10px; flex: 1; min-width: 130px; border-radius: 10px; }
         .addgrid { display: flex; gap: 12px; flex-wrap: wrap; align-items: flex-start; }
         .chips { display: flex; flex-wrap: wrap; gap: 6px; flex: 2 1 220px; }
+        .chip { white-space: nowrap; }
         .chip { border: 1px solid var(--divider-color); border-radius: 999px;
                 padding: ${c.compact ? "5px 11px" : "7px 14px"}; cursor: pointer; font: inherit;
                 background: var(--secondary-background-color); color: var(--primary-text-color); }
         .chip:hover { filter: brightness(1.1); }
         .chip.on { background: var(--primary-color); border-color: var(--primary-color);
-                   color: var(--text-primary-color, #fff); font-weight: 600; }
+                   color: var(--text-primary-color, #fff); }
         .addside { display: flex; flex-direction: column; gap: 8px; flex: 1 1 170px; min-width: 150px; }
         .addside select { padding: 8px 10px; border-radius: 10px; }
         .addbtns { display: flex; gap: 8px; flex-wrap: wrap; }

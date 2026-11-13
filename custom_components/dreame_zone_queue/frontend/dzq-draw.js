@@ -404,7 +404,7 @@ export function attachZoneEditor(zwrap, img, svg, cb) {
         fill="${colOf(st.sel)}" fill-opacity=".2" stroke="${colOf(st.sel)}" stroke-width="${sw}"
         stroke-dasharray="${5 / st.scale} ${4 / st.scale}" rx="${3 / st.scale}"/>`;
     }
-    if (st.pend.length) {
+    if (st.pend.length && st.pend.length < 3) {
       const ptStr = st.pend.map((q) => q.join(",")).join(" ");
       html += st.pend.length > 2
         ? `<polygon points="${ptStr}" fill="${colOf(st.sel)}" fill-opacity=".2" stroke="${colOf(st.sel)}" stroke-width="${sw}"/>`
@@ -467,7 +467,11 @@ export function attachZoneEditor(zwrap, img, svg, cb) {
     if (st.ptrs.size !== 1) return;
     const p = imgPos(e);
     st.down = p;
-    if (st.pend.length) return;       // trwa rysowanie wielokąta: tap = punkt
+    if (st.pend.length) {             // trwa rysowanie wielokąta: tap = punkt,
+      if (handleAt(p) === null) return;  // chyba że trafiono w uchwyt (koniec rysowania)
+      st.pend = [];
+      if (cb.progress) cb.progress(0);
+    }
     const h = handleAt(p);
     if (h !== null) {
       st.drag = { type: "handle", idx: st.sel, h };
@@ -544,9 +548,13 @@ export function attachZoneEditor(zwrap, img, svg, cb) {
       } else redraw();
       return;
     }
-    if (st.mode === "poly" && emptySel() && !st.drag) {
+    if (st.mode === "poly" && (emptySel() || st.pend.length) && !st.drag) {
       st.pend.push(p);
+      // od trzeciego punktu kształt istnieje od razu (bez „zakończ"); kolejne
+      // tapnięcia dodają punkty, aż użytkownik chwyci uchwyt / zmieni strefę
+      if (st.pend.length >= 3) st.shapes[st.sel] = { kind: "poly", pts: st.pend.slice() };
       redraw();
+      if (st.pend.length >= 3 && cb.change) cb.change(st.sel);
       if (cb.progress) cb.progress(st.pend.length);
     }
   };
@@ -571,14 +579,15 @@ export function attachZoneEditor(zwrap, img, svg, cb) {
     select(i) { st.sel = i; resetPend(); redraw(); },
     getSelected: () => st.sel,
     clearSelected() { if (st.sel >= 0) st.shapes[st.sel] = null; resetPend(); redraw(); },
-    undoPoint() { if (st.pend.length) { st.pend.pop(); redraw(); if (cb.progress) cb.progress(st.pend.length); } },
-    finishPoly() {
-      if (st.pend.length < 3 || !emptySel()) return false;
-      st.shapes[st.sel] = { kind: "poly", pts: st.pend.slice() };
-      resetPend(); redraw();
+    undoPoint() {
+      if (!st.pend.length) return;
+      st.pend.pop();
+      st.shapes[st.sel] = st.pend.length >= 3 ? { kind: "poly", pts: st.pend.slice() } : null;
+      redraw();
       if (cb.change) cb.change(st.sel);
-      return true;
+      if (cb.progress) cb.progress(st.pend.length);
     },
+    finishPoly() { resetPend(); redraw(); return true; },
     pendingCount: () => st.pend.length,
     shapes: () => st.shapes,
     redraw,

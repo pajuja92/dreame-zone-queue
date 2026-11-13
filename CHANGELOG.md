@@ -4,6 +4,18 @@ Wszystkie istotne zmiany w projekcie. Format oparty o
 [Keep a Changelog](https://keepachangelog.com/pl/1.1.0/),
 wersjonowanie zgodne z [SemVer](https://semver.org/lang/pl/).
 
+## [2.0.0-beta.28] - 2026-11-13
+
+### Zmienione
+- **Karta kolejki:** zaznaczenie pokoju w „Dodaj pokój" nie zmienia rozmiaru
+  przycisku (koniec przeskakiwania do następnej linii).
+- **Okno „Własna strefa":** mapa po lewej, lista stref po prawej (przewijana,
+  nie zasłania mapy). W wierszu: numer, nazwa, ✕/+ w jednej linii, pod spodem
+  ssanie / mop / powtórzenia, na końcu opis strefy.
+- **Wielokąt:** kształt powstaje od razu po trzecim punkcie, kolejne tapnięcia
+  dodają punkty; przycisk „Zakończ kształt" usunięty. Chwycenie uchwytu kończy
+  dodawanie punktów.
+
 ## [2.0.0-beta.27] - 2026-11-13
 
 ### Dodane
