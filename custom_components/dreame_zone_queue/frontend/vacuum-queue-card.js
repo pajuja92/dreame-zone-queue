@@ -676,9 +676,11 @@ class VacuumQueueCard extends HTMLElement {
           <button data-x="mpoly" style="${btnOff}">△ Wielokąt</button>
           <button data-x="mundo" style="${btnOff};display:none">↩ Cofnij punkt</button>
           <button data-x="mclear" style="${btnOff}">Wyczyść strefę</button>
-          <span class="zhint" style="color:var(--secondary-text-color)"></span>
         </div>
-        <div class="zinfo" style="font-size:.9em;color:var(--secondary-text-color)"></div>
+        <div style="font-size:.9em;line-height:1.35;color:var(--secondary-text-color)">
+          <div class="zhint" style="min-height:2.7em"></div>
+          <div class="zinfo" style="min-height:1.35em"></div>
+        </div>
         <div style="display:flex;gap:12px;align-items:flex-start;flex-wrap:wrap">
           <div style="flex:1 1 440px;min-width:0">${mapBlock}</div>
           <div class="zrows" style="flex:0 1 400px;min-width:min(100%,300px);max-height:62vh;overflow-y:auto;

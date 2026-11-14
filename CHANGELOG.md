@@ -4,6 +4,12 @@ Wszystkie istotne zmiany w projekcie. Format oparty o
 [Keep a Changelog](https://keepachangelog.com/pl/1.1.0/),
 wersjonowanie zgodne z [SemVer](https://semver.org/lang/pl/).
 
+## [2.0.0-beta.29] - 2026-11-14
+
+### Naprawione
+- **Okno „Własna strefa":** podpowiedź i komunikat „Punkty: n/3" mają stałe
+  miejsce nad mapą — mapa nie zmienia już rozmiaru przy rysowaniu.
+
 ## [2.0.0-beta.28] - 2026-11-13
 
 ### Zmienione
