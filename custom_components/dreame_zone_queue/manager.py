@@ -40,6 +40,7 @@ from .const import (
     FEEDBACK_ARCHIVES_KEEP,
     INTERRUPT_WARN_S,
     RESUME_AFTER_RESTART_S,
+    RESUME_BATTERY_PCT,
     RESUME_TRIES,
     DEFAULT_FINISHED_STATES,
     DEFAULT_GRACE_S,
@@ -689,6 +690,19 @@ class QueueManager:
         """Start a fresh queue OR resume a paused one."""
         _LOGGER.info("DZQ_ACTION | START | running=%s queue_len=%s pending=%s", self.running, len(self.queue), sum(1 for i in self.queue if i['status'] == STATUS_PENDING))
         if self.running:
+            # kolejka "pracuje", ale robot stoi (np. laduje sie w trakcie pokoju)
+            # -> reczne wznowienie "z reki", bez czekania na samoczynny start
+            if self._active() is not None:
+                vac = self.hass.states.get(self.vacuum_entity)
+                if vac is not None and self._robot_waiting(vac):
+                    _LOGGER.info("DZQ_ACTION | MANUAL_RESUME | robot stoi/ładuje się")
+                    try:
+                        await self.hass.services.async_call(
+                            "vacuum", "start",
+                            {"entity_id": self.vacuum_entity}, blocking=False,
+                        )
+                    except Exception as err:  # noqa: BLE001
+                        _LOGGER.warning("Manual resume failed: %s", err)
             return
         self._dispatch_tries = 0  # swiezy start = pelna pula ponowien
         active = self._active()
@@ -1347,6 +1361,14 @@ class QueueManager:
             "cleaning", "segment_cleaning", "spot_cleaning", "cruising",
             "fast_mapping",
         )
+
+    def _robot_waiting(self, state) -> bool:
+        """Robot ma zadanie, ale stoi (pauza / ladowanie w trakcie pokoju)."""
+        a = state.attributes
+        b = self._to_bool
+        return (state.state in ("paused", "charging")
+                and (b(a.get("paused")) or b(a.get("cleaning_paused"))
+                     or b(a.get("charging"))))
 
     def _task_running(self, state) -> bool:
         """Czy robot faktycznie sprzata (nie stoi, nie wstrzymany).
@@ -2275,4 +2297,5 @@ class QueueManager:
             "vacuum_entity": self.vacuum_entity,
             "feedback": self.feedback,
             "paused_reason": self.paused_reason if state == "paused" else None,
+            "resume_battery_pct": RESUME_BATTERY_PCT,
         }

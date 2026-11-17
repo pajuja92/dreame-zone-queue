@@ -24,12 +24,33 @@ const T_WATER = { off: "wy\u0142.", slightly_dry: "lekko suchy",
 const estTxt = (it) =>
   it && it.est_s != null ? `~${Math.max(1, Math.round(it.est_s / 60))} min` : "";
 
+// robot ma zadanie, ale stoi (pauza / ladowanie w trakcie pokoju)
+const robotWaiting = (v) => {
+  if (!v) return false;
+  const a = v.attributes || {};
+  const t = (x) => x === true || x === 1 || x === "on" || x === "true";
+  return ["paused", "charging", "docked"].includes(v.state) &&
+    (t(a.paused) || t(a.cleaning_paused) || (t(a.charging) && t(a.zone_cleaning)));
+};
+
 // linia "robot: ..." — stan + bateria + powód postoju kolejki
 const robotLine = (st, vacObj) => {
   const vs = vacObj ? vacObj.state : "?";
   let line = "robot: " + (T_STATE[vs] || vs);
   const batt = vacObj && (vacObj.attributes.battery ?? vacObj.attributes.battery_level);
   if (batt != null && batt !== "") line += ` · \u{1F50B} ${batt}%`;
+  // robot stoi z zadaniem (laduje sie w trakcie pokoju) — kiedy ruszy sam
+  const w = robotWaiting(vacObj);
+  if (w && st.state === "running") {
+    const a = vacObj.attributes;
+    const thr = st.attributes.resume_battery_pct || 80;
+    if (a.resume_cleaning === false || a.resume_cleaning === "off")
+      line += " · \u26A1 \u0142aduje si\u0119 \u2014 wznawianie wy\u0142\u0105czone, naci\u015Bnij Kontynuuj";
+    else if (batt != null && Number(batt) >= thr)
+      line += " · \u26A1 zaraz rusza sam";
+    else
+      line += ` · \u26A1 \u0142aduje si\u0119 \u2014 ruszy sam przy ~${thr}%${batt != null && batt !== "" ? ` (brakuje ${Math.max(0, thr - Number(batt))}%)` : ""}`;
+  }
   if (st.state === "paused") {
     line += ` · ⏸ ${st.attributes.paused_reason || "kolejka wstrzymana — naciśnij Kontynuuj"}`;
     const hasActive = (st.attributes.items || []).some((i) => i.status === "active");
@@ -1323,7 +1344,7 @@ class VacuumQueueCard extends HTMLElement {
           ${(() => {
             const hasActive = items.some((it2) => it2.status === "active");
             if (st.state === "running") return `
-               <button class="btn primary" id="pause" title="Robot zatrzymuje si\u0119 natychmiast w miejscu">\u23F8 Pauza</button>
+               ${robotWaiting(vacObj) && hasActive ? `<button class="btn primary" id="start" title="Robot nie czeka na na\u0142adowanie \u2014 rusza od razu">\u25B6 Kontynuuj</button>` : `<button class="btn primary" id="pause" title="Robot zatrzymuje si\u0119 natychmiast w miejscu">\u23F8 Pauza</button>`}
                ${hasActive ? `<button class="btn" id="finish" title="Robot doko\u0144czy bie\u017C\u0105cy pok\u00F3j, kolejka si\u0119 wstrzyma">\u{1F3C1} Doko\u0144cz pok\u00F3j</button>
                <button class="btn" id="skip">\u23ED Pomi\u0144</button>` : ""}
                <button class="btn" id="dock" title="Robot wraca do stacji; pok\u00F3j wr\u00F3ci do oczekuj\u0105cych, kolejka si\u0119 wstrzyma">\u{1F3E0} Do bazy</button>

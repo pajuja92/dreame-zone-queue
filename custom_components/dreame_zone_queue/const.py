@@ -106,6 +106,7 @@ ATTR_REPEATS = "repeats"
 DISPATCH_RETRIES = 3            # ponowienia wysylki strefy przed pauza
 DISPATCH_RETRY_S = 60
 RESUME_AFTER_RESTART_S = 60     # po restarcie HA: sprawdz robota i wznow kolejke
+RESUME_BATTERY_PCT = 80         # przy tylu % robot sam wznawia przerwany pokoj (info na karcie)
 RESUME_TRIES = 5                # ...gdy encja robota jeszcze niedostepna
 INTERRUPT_WARN_S = 2 * 3600     # przerwa (ladowanie, DND...) dluzsza = push
 CUSTOM_HISTORY_DAYS = 30        # historia wlasnych stref bez nowych przebiegow

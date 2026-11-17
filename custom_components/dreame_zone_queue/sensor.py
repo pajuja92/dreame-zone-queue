@@ -75,4 +75,5 @@ class QueueSensor(SensorEntity):
             "vacuum_entity": snap["vacuum_entity"],
             "feedback": snap["feedback"],
             "paused_reason": snap["paused_reason"],
+            "resume_battery_pct": snap["resume_battery_pct"],
         }

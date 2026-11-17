@@ -4,6 +4,18 @@ Wszystkie istotne zmiany w projekcie. Format oparty o
 [Keep a Changelog](https://keepachangelog.com/pl/1.1.0/),
 wersjonowanie zgodne z [SemVer](https://semver.org/lang/pl/).
 
+## [2.0.0-beta.30] - 2026-11-17
+
+### Dodane
+- **Karta kolejki — „Kontynuuj" podczas ładowania.** Gdy robot ładuje się w
+  środku pokoju (kolejka „pracuje", robot stoi), w Sterowaniu pojawia się
+  przycisk ▶ Kontynuuj zamiast Pauzy. Wznawia sprzątanie od razu, „z ręki",
+  bez czekania na naładowanie.
+- **Karta kolejki — info o samoczynnym starcie.** Linia „robot: …" mówi, kiedy
+  robot ruszy sam: „ładuje się — ruszy sam przy ~80% (brakuje N%)", „zaraz rusza
+  sam", albo ostrzega, że wznawianie po ładowaniu jest wyłączone.
+- Atrybut `resume_battery_pct` w sensorze kolejki.
+
 ## [2.0.0-beta.29] - 2026-11-14
 
 ### Naprawione
