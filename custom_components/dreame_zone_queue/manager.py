@@ -68,6 +68,7 @@ from .const import (
     SUCTION_TO_INT,
     UNREACHABLE_AREA_RATIO,
     WASH_WAIT_TIMEOUT_S,
+    DOCK_WAIT_TIMEOUT_S,
     WATCHDOG_S,
     WATER_TO_INT,
 )
@@ -1720,6 +1721,14 @@ class QueueManager:
             "events": self._events_summary(item),
         }
 
+    def _next_needs_wet_pad(self, item: dict) -> bool:
+        """Skonczony pokoj byl BEZ wody, a nastepny oczekujacy jest mopowany:
+        robot musi dojechac do bazy i namoczyc mop, zanim dostanie strefe."""
+        if item.get("water") != "off":
+            return False
+        nxt = next((i for i in self.queue if i["status"] == STATUS_PENDING), None)
+        return nxt is not None and nxt.get("water") != "off"
+
     def _after_finish_dispatch(self, item: dict, direct: bool = False) -> None:
         """Wspolny ogon po zamknieciu pokoju: wash-wait albo kolejny."""
         if not self.running:
@@ -1733,6 +1742,14 @@ class QueueManager:
             # nie wysylaj kolejnego pokoju, dopoki stacja nie umyje mopa
             self._wait_wash = {"since": time.monotonic(), "seen": False}
             _LOGGER.info("DZQ_DECISION | WAIT_WASH | room=%s", item["room"])
+            self._schedule_watchdog()
+        elif self._next_needs_wet_pad(item):
+            # odkurzanie -> mopowanie: nie przerywaj powrotu do bazy, poczekaj
+            # az robot dojedzie (namoczy mop), dopiero potem wyslij strefe
+            self._wait_wash = {"since": time.monotonic(), "seen": False,
+                               "dock": True}
+            _LOGGER.info("DZQ_DECISION | WAIT_DOCK | room=%s — nastepny "
+                         "pokoj mopowany, czekam na baze", item["room"])
             self._schedule_watchdog()
         else:
             self._schedule_dispatch(self.delay_between_s)
@@ -1771,7 +1788,9 @@ class QueueManager:
     def _direct_next_ok(self, item: dict, new) -> bool:
         """Robot skonczyl pokoj BEZ mopa (samo odkurzanie) i rusza do bazy ->
         zaliczamy pokoj od razu i wysylamy nastepny (bez dojazdu do bazy).
-        Po mopowaniu powrot zostaje — stacja myje mop przed kolejna strefa. L10 Prime raportuje powrot na koniec pokoju i na
+        Po mopowaniu powrot zostaje — stacja myje mop przed kolejna strefa.
+        Powrot zostaje tez, gdy NASTEPNY pokoj jest mopowany — mop musi
+        zostac namoczony w bazie (log 21.11: jazda na sucho). L10 Prime raportuje powrot na koniec pokoju i na
         ladowanie identycznie (returning, resume_cleaning=True) — rozroznia
         je bateria i sprzatnieta czesc strefy."""
         if not (self.direct_next and self.running) or new.state != "returning":
@@ -1785,6 +1804,8 @@ class QueueManager:
             return False  # mop pracowal -> baza (mycie mopa)
         if not any(i["status"] == STATUS_PENDING for i in self.queue):
             return False  # koniec kolejki -> baza
+        if self._next_needs_wet_pad(item):
+            return False  # nastepny pokoj mopowany -> baza (namoczenie mopa)
         bat = self._battery()
         if bat is None or bat < self.direct_min_battery:
             return False
@@ -1884,16 +1905,22 @@ class QueueManager:
                 or b(attrs.get("returning_to_wash"))
                 or vs in ("returning_to_wash", "washing", "washing_paused",
                           "clean_add_water"))
+        dock_wait = bool(self._wait_wash.get("dock"))
+        if dock_wait and (b(attrs.get("charging"))
+                          or vs in ("charging", "smart_charging", "docked")):
+            busy = True  # dojechal do bazy
         if busy:
             self._wait_wash["seen"] = True
-            return
-        if b(attrs.get("drying")):
+            if not dock_wait:
+                return
+        elif b(attrs.get("drying")):
             # suszenie = mycie skonczone; trwa godzinami i mozna je
             # bezpiecznie przerwac — bez tego wait ZAWSZE konczyl sie
             # 3-minutowym timeoutem (log 23.07 10:44)
             self._wait_wash["seen"] = True
-        timed_out = (time.monotonic() - self._wait_wash["since"]
-                     > WASH_WAIT_TIMEOUT_S)
+        # dojazd do bazy trwa dluzej niz samo mycie
+        limit = DOCK_WAIT_TIMEOUT_S if dock_wait else WASH_WAIT_TIMEOUT_S
+        timed_out = time.monotonic() - self._wait_wash["since"] > limit
         if self._wait_wash["seen"] or timed_out:
             if timed_out and not self._wait_wash["seen"]:
                 _LOGGER.warning(

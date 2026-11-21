@@ -4,6 +4,23 @@ Wszystkie istotne zmiany w projekcie. Format oparty o
 [Keep a Changelog](https://keepachangelog.com/pl/1.1.0/),
 wersjonowanie zgodne z [SemVer](https://semver.org/lang/pl/).
 
+## [2.0.0-beta.31] - 2026-11-21
+
+### Naprawione
+- **Odkurzanie → mopowanie: robot wraca do bazy i moczy mop.** Skrót „jazda
+  prosto" (`direct_next_room`) po pokoju bez wody wysyłał następną strefę od
+  razu, w trakcie powrotu do bazy — jeśli następny pokój był mopowany, robot
+  jechał na sucho (log 21.11, 09:43:30 → 09:43:31). Teraz skrót nie działa, gdy
+  następny oczekujący pokój ma wodę.
+- **Zabezpieczenie dla ścieżki bez „przerwania":** gdy po pokoju bez wody
+  następny jest mopowany, kolejka czeka, aż robot dojedzie do bazy (do 10 min),
+  i dopiero wtedy wysyła strefę (`WAIT_DOCK` w dzienniku).
+
+### Zmienione
+- Test `test_direct_after_sweep_to_mop` zastąpiony trzema scenariuszami:
+  odkurzanie → mopowanie jedzie do bazy, czeka na dojazd, a odkurzanie →
+  odkurzanie nadal jedzie prosto.
+
 ## [2.0.0-beta.30] - 2026-11-17
 
 ### Dodane

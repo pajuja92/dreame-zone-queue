@@ -1327,9 +1327,41 @@ async def test_direct_after_sweep_to_sweep():
     assert _went_direct(hass, m)
 
 
-async def test_direct_after_sweep_to_mop():
-    hass, m = await _two_rooms({}, water2="moist")  # mop czysty -> prosto
-    assert _went_direct(hass, m)
+async def test_sweep_to_mop_goes_to_dock_not_direct():
+    # log 21.11: po odkurzaniu skrot "prosto" wysylal mopowanie w trakcie
+    # powrotu — mop nie byl namoczony w bazie. Teraz: baza, potem mop.
+    hass, m = await _two_rooms({}, water2="moist")
+    assert not _went_direct(hass, m)
+    assert m.queue[0]["status"] == "active" and len(zone_calls(hass)) == 1
+
+
+async def test_sweep_to_mop_waits_for_dock():
+    hass, m = mk({const.CONF_DIRECT_NEXT: False})
+    await m.async_setup()
+    await m.async_add("Salon", water="off")
+    await m.async_add("Kuchnia", water="moist")
+    hass.states[VAC] = st("docked", **TASK_DONE)
+    await m.async_start()
+    send(m, st("cleaning", **CLEANING), st("returning", **TASK_DONE))
+    assert m.queue[0]["status"] == "done"
+    assert m._wait_wash and m._wait_wash.get("dock")
+    await fire_timers(hass)
+    assert len(zone_calls(hass)) == 1          # jedzie do bazy, nie wysylamy mopa
+    send(m, st("returning", **TASK_DONE),
+         st("docked", charging=True, vacuum_state="charging", **TASK_DONE))
+    await fire_timers(hass)
+    assert m._wait_wash is None and len(zone_calls(hass)) == 2  # w bazie -> mop rusza
+
+
+async def test_sweep_to_sweep_does_not_wait_for_dock():
+    hass, m = mk({const.CONF_DIRECT_NEXT: False})
+    await m.async_setup()
+    await m.async_add("Salon", water="off")
+    await m.async_add("Kuchnia", water="off")
+    hass.states[VAC] = st("docked", **TASK_DONE)
+    await m.async_start()
+    send(m, st("cleaning", **CLEANING), st("returning", **TASK_DONE))
+    assert not m._wait_wash
 
 
 async def test_mop_room_returns_to_wash():

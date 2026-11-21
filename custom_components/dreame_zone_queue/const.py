@@ -39,6 +39,7 @@ STALL_WARN_S = 25 * 60
 ABANDON_S = 28 * 60
 CANCEL_REVERT_WINDOW_S = 15  # how long after "done" a cancel event may revert it
 WASH_WAIT_TIMEOUT_S = 180  # give up waiting for a between-rooms mop wash
+DOCK_WAIT_TIMEOUT_S = 600  # give up waiting for the robot to reach the dock (sweep -> mop)
 # "completed" with the zone barely touched = physical home/stop press
 # (L10 Prime never fires the cancel bus event); real finishes clean 57-82%
 CANCEL_AREA_RATIO = 0.4
